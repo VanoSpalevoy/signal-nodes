@@ -1,3 +1,7 @@
+//! Signal Forge editor binary: opens the native window and runs [`editor::SignalForgeApp`].
+//!
+//! Release builds on Windows use the GUI subsystem, so no console window appears.
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod editor;

@@ -1,8 +1,16 @@
+//! Left node palette.
+//!
+//! One button per [`NodeKind`]. Dragging a button starts a palette drag by setting
+//! `app.dragged_palette_kind`; the canvas draws the drop preview and creates the
+//! node when the button is released over it (see `canvas::finish_palette_drop`).
+//! Releasing anywhere else cancels the drag. Clicking a button does nothing.
+
 use eframe::egui;
 
 use super::{node_color, panel_frame};
 use crate::editor::{NodeKind, SignalForgeApp};
 
+/// Shows the palette as a fixed-width (120 pt) left panel.
 pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
     egui::Panel::left("palette")
         .resizable(false)
