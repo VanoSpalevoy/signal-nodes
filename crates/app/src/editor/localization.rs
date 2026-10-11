@@ -31,8 +31,8 @@ pub(super) enum Text {
     Output,
     DeleteNode,
     NodeLimitReached,
-    // EnableGrid,
-    Format,
+    ConnectionCreatesCycle,
+    SnapToGrid,
     Scale,
     // Socket labels
     Audio,
@@ -82,8 +82,10 @@ impl Language {
             (Self::English, Text::Output) => "Output",
             (Self::English, Text::DeleteNode) => "Delete node",
             (Self::English, Text::NodeLimitReached) => "Node limit reached",
-            // (Self::English, Text::EnableGrid) => "Enable Grid",
-            (Self::English, Text::Format) => "Format",
+            (Self::English, Text::ConnectionCreatesCycle) => {
+                "Connection refused: it would create a cycle"
+            }
+            (Self::English, Text::SnapToGrid) => "Snap to grid",
             (Self::English, Text::Scale) => "Scale",
             (Self::English, Text::Audio) => "Audio",
             (Self::English, Text::AudioIn) => "Audio in",
@@ -114,8 +116,10 @@ impl Language {
             (Self::Russian, Text::Output) => "Выход",
             (Self::Russian, Text::DeleteNode) => "Удалить ноду",
             (Self::Russian, Text::NodeLimitReached) => "Достигнут лимит нод",
-            // (Self::Russian, Text::EnableGrid) => "Включить сетку",
-            (Self::Russian, Text::Format) => "Форматировать",
+            (Self::Russian, Text::ConnectionCreatesCycle) => {
+                "Соединение отклонено: образуется цикл"
+            }
+            (Self::Russian, Text::SnapToGrid) => "Привязать к сетке",
             (Self::Russian, Text::Scale) => "Масштаб",
             (Self::Russian, Text::Audio) => "Аудио",
             (Self::Russian, Text::AudioIn) => "Аудио вход",

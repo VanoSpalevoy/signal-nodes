@@ -1,21 +1,45 @@
 //! Top toolbar.
 //!
-//! - **Format** — snaps every node's top-left corner to a [`GRID_STEP`] grid
-//!   anchored at the canvas origin.
-//! - **Scale** — canvas zoom (0.5–2.0) stored in `app.scale`; not applied to rendering yet.
+//! - **Snap to grid** — snaps every node's top-left corner to a [`GRID_STEP`] grid
+//!   anchored at the canvas origin, moving nodes to the nearest free grid point
+//!   where snapping would make them overlap.
+//! - **Scale** — canvas zoom ([`SCALE_RANGE`], in [`SCALE_STEP`] steps) stored in
+//!   `app.scale` and applied by the canvas.
 //! - **Language** — switches the UI language; takes effect on the next frame.
 //!
 //! The toolbar wraps onto more lines when the window is narrow, which makes the
 //! panel taller and the canvas shorter.
 
 use eframe::egui;
-use egui::Widget;
 
-use super::{Language, panel_frame};
+use super::{Language, caption, panel_frame, placement};
 use crate::editor::{SignalForgeApp, Text};
 
-/// Grid size used by the Format button, in canvas points.
+/// Grid size used by Snap to grid, in canvas units.
 const GRID_STEP: f32 = 50.0;
+/// Allowed canvas zoom.
+const SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=2.0;
+/// Zoom slider step. Coarse steps keep the number of distinct font sizes (each
+/// one is rasterized into egui's font atlas) small.
+const SCALE_STEP: f64 = 0.1;
+
+/// Snaps every node to the nearest [`GRID_STEP`] grid point that keeps clear of
+/// the others. Node positions are canvas coordinates, so the grid starts at the
+/// canvas origin. Nodes are placed one by one, each against the current
+/// positions of all the others.
+fn snap_to_grid(nodes: &mut [super::NodeWidget]) {
+    for index in 0..nodes.len() {
+        let obstacles: Vec<_> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, node)| node.rect())
+            .collect();
+        let node = &mut nodes[index];
+        let snapped = (node.pos / GRID_STEP).round() * GRID_STEP;
+        node.pos = placement::free_pos(snapped, node.config.size(), &obstacles, GRID_STEP);
+    }
+}
 
 /// Shows the toolbar as a top panel and applies its actions to `app`.
 pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
@@ -26,22 +50,21 @@ pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
             ui.horizontal_wrapped(|ui| {
                 ui.set_min_height(34.0);
                 ui.add_space(12.0);
-                ui.label(app.language.text(Text::Tools));
+                caption(ui, app.language.text(Text::Tools));
                 ui.add_space(12.0);
-                if ui.button(app.language.text(Text::Format)).clicked() {
-                    // Node positions are canvas coordinates, so the grid starts at the canvas origin.
-                    for node in &mut app.nodes {
-                        node.pos = (node.pos / GRID_STEP).round() * GRID_STEP;
-                    }
+                if ui.button(app.language.text(Text::SnapToGrid)).clicked() {
+                    snap_to_grid(&mut app.nodes);
                 }
                 ui.separator();
-                egui::Slider::new(&mut app.scale, 0.5..=2.0)
-                    .text(app.language.text(Text::Scale))
-                    .show_value(true)
-                    .ui(ui);
+                ui.add(
+                    egui::Slider::new(&mut app.scale, SCALE_RANGE)
+                        .step_by(SCALE_STEP)
+                        .text(app.language.text(Text::Scale))
+                        .show_value(true),
+                );
                 ui.separator();
-                ui.label(app.language.text(Text::Settings));
-                ui.add_space(12.0);
+                caption(ui, app.language.text(Text::Settings));
+                ui.add_space(4.0);
                 ui.label(app.language.text(Text::Language));
                 egui::ComboBox::from_id_salt("language")
                     .selected_text(app.language.native_name())
