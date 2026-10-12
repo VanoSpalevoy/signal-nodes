@@ -20,11 +20,21 @@ pub(super) const NODE_GAP: f32 = 10.0;
 const PLACEMENT_STEP: f32 = 10.0;
 /// Rings searched by [`free_pos`] before giving up and returning the wanted position.
 const MAX_SEARCH_RINGS: i32 = 200;
+/// Tolerance of every gap check, in canvas units. A node stopped at exactly
+/// [`NODE_GAP`] can end up a rounding error closer; without the tolerance it would
+/// count as overlapping its neighbor next frame, and [`slide`] would let it through.
+const EPSILON: f32 = 0.01;
+
+/// The zone around `rect` another node must stay out of: [`NODE_GAP`] wide, minus
+/// [`EPSILON`].
+fn keep_out(rect: egui::Rect) -> egui::Rect {
+    rect.expand(NODE_GAP - EPSILON)
+}
 
 /// Whether `a` and `b` overlap or are closer than [`NODE_GAP`]. Touching at
-/// exactly the gap is allowed.
+/// exactly the gap (within [`EPSILON`]) is allowed.
 fn too_close(a: egui::Rect, b: egui::Rect) -> bool {
-    let b = b.expand(NODE_GAP);
+    let b = keep_out(b);
     a.min.x < b.max.x && b.min.x < a.max.x && a.min.y < b.max.y && b.min.y < a.max.y
 }
 
@@ -63,15 +73,16 @@ pub(super) fn slide(
 /// Moves `rect` horizontally to `x` (its new left edge), stopping before obstacles.
 fn sweep_x(rect: egui::Rect, x: f32, obstacles: &[egui::Rect]) -> egui::Rect {
     let mut x = x;
-    for obstacle in obstacles.iter().map(|obstacle| obstacle.expand(NODE_GAP)) {
-        let rows_overlap = rect.min.y < obstacle.max.y && obstacle.min.y < rect.max.y;
+    for obstacle in obstacles {
+        let zone = keep_out(*obstacle);
+        let rows_overlap = rect.min.y < zone.max.y && zone.min.y < rect.max.y;
         if !rows_overlap {
             continue;
         }
-        if x > rect.min.x && obstacle.min.x >= rect.max.x {
-            x = x.min(obstacle.min.x - rect.width());
-        } else if x < rect.min.x && obstacle.max.x <= rect.min.x {
-            x = x.max(obstacle.max.x);
+        if x > rect.min.x && zone.min.x >= rect.max.x {
+            x = x.min(obstacle.min.x - NODE_GAP - rect.width());
+        } else if x < rect.min.x && zone.max.x <= rect.min.x {
+            x = x.max(obstacle.max.x + NODE_GAP);
         }
     }
     rect.translate(egui::vec2(x - rect.min.x, 0.0))
@@ -80,15 +91,16 @@ fn sweep_x(rect: egui::Rect, x: f32, obstacles: &[egui::Rect]) -> egui::Rect {
 /// Moves `rect` vertically to `y` (its new top edge), stopping before obstacles.
 fn sweep_y(rect: egui::Rect, y: f32, obstacles: &[egui::Rect]) -> egui::Rect {
     let mut y = y;
-    for obstacle in obstacles.iter().map(|obstacle| obstacle.expand(NODE_GAP)) {
-        let columns_overlap = rect.min.x < obstacle.max.x && obstacle.min.x < rect.max.x;
+    for obstacle in obstacles {
+        let zone = keep_out(*obstacle);
+        let columns_overlap = rect.min.x < zone.max.x && zone.min.x < rect.max.x;
         if !columns_overlap {
             continue;
         }
-        if y > rect.min.y && obstacle.min.y >= rect.max.y {
-            y = y.min(obstacle.min.y - rect.height());
-        } else if y < rect.min.y && obstacle.max.y <= rect.min.y {
-            y = y.max(obstacle.max.y);
+        if y > rect.min.y && zone.min.y >= rect.max.y {
+            y = y.min(obstacle.min.y - NODE_GAP - rect.height());
+        } else if y < rect.min.y && zone.max.y <= rect.min.y {
+            y = y.max(obstacle.max.y + NODE_GAP);
         }
     }
     rect.translate(egui::vec2(0.0, y - rect.min.y))
@@ -162,6 +174,17 @@ mod tests {
             egui::Rect::from_min_size(pos, rect(0.0, 0.0).size()),
             &[obstacle]
         ));
+    }
+
+    #[test]
+    fn slide_stops_when_a_rounding_error_too_close() {
+        let obstacle = rect(300.0, 0.0);
+        // Stopped in front of the obstacle, but a hair closer than the gap.
+        let current = rect(300.0 - NODE_GAP - 100.0 + 0.001, 0.0);
+
+        let pos = slide(current, egui::pos2(1000.0, 0.0), &[obstacle]);
+
+        assert!(pos.x < obstacle.min.x, "tunneled through to {pos:?}");
     }
 
     #[test]

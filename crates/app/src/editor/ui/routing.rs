@@ -7,15 +7,20 @@
 //! 1. Leave the output with a horizontal stub of [`STUB`] and enter the input the
 //!    same way, so connections always run out of the right edge and into the left.
 //! 2. Search between the two stub ends on a grid with A*. Cells closer than
-//!    [`CLEARANCE`] to a node are blocked; every turn costs extra, so paths have
-//!    as few bends as possible; arriving at the input other than left-to-right
-//!    costs a turn too.
+//!    [`MIN_CLEARANCE`] to a node are blocked; cells closer than [`CLEARANCE`] are
+//!    allowed but cost extra, so paths keep their distance where there is room and
+//!    still squeeze between closely packed nodes. Every turn costs extra, so paths
+//!    have as few bends as possible; arriving at the input other than
+//!    left-to-right costs a turn too.
 //! 3. Merge collinear cells into corner points. The canvas draws the result with
 //!    rounded corners.
 //!
 //! The grid is aligned so both stub ends are exactly grid points: the cell size is
 //! adjusted per connection (close to [`CELL`]) so the distance between them is a
 //! whole number of cells. That keeps the final segments straight, without jogs.
+//! The one exception: ends less than half a cell apart on an axis (but not
+//! aligned) can't both be grid points, so the last grid point is joined to the
+//! input's stub end with a short orthogonal jog.
 //!
 //! If no path exists inside the search area, the plain curve is used. Everything
 //! is in canvas coordinates.
@@ -26,8 +31,10 @@ use std::collections::BinaryHeap;
 
 /// Length of the horizontal run out of an output and into an input.
 const STUB: f32 = 20.0;
-/// Distance a routed path keeps from every node.
+/// Distance a routed path keeps from every node when there is room.
 const CLEARANCE: f32 = 12.0;
+/// Distance a routed path always keeps from every node.
+const MIN_CLEARANCE: f32 = 4.0;
 /// Nominal grid cell size of the path search.
 const CELL: f32 = 10.0;
 /// How far beyond the two endpoints the search may go around obstacles.
@@ -40,6 +47,8 @@ const CURVE_SAMPLES: usize = 48;
 const STEP_COST: u32 = 10;
 /// Extra path cost of a 90° turn.
 const TURN_COST: u32 = 50;
+/// Extra path cost of a grid step closer than [`CLEARANCE`] to a node.
+const NEAR_COST: u32 = 30;
 
 /// How a connection is drawn.
 #[derive(Clone, Debug, PartialEq)]
@@ -111,7 +120,10 @@ fn find_path(start: Pos2, end: Pos2, obstacles: &[Rect]) -> Option<Vec<Pos2>> {
 
     let mut points = vec![start];
     points.extend(cells.into_iter().map(|cell| grid.pos(cell)));
-    points.push(end);
+    // Usually the last grid point is `to` already; if not (see the module docs),
+    // join it with an orthogonal jog instead of a diagonal.
+    let last = grid.pos(grid.goal);
+    points.extend([Pos2::new(last.x, to.y), to, end]);
     Some(corners(points))
 }
 
@@ -142,7 +154,10 @@ struct Grid {
     min: (i32, i32),
     columns: usize,
     rows: usize,
+    /// Points closer than [`MIN_CLEARANCE`] to a node: never on a path.
     blocked: Vec<bool>,
+    /// Points closer than [`CLEARANCE`] to a node: allowed, but cost [`NEAR_COST`].
+    near: Vec<bool>,
     goal: (i32, i32),
 }
 
@@ -189,27 +204,41 @@ impl Grid {
             columns,
             rows,
             blocked: vec![false; columns * rows],
+            near: vec![false; columns * rows],
             goal,
         };
-        for obstacle in obstacles.iter().map(|rect| rect.expand(CLEARANCE)) {
-            let i0 = ((obstacle.min.x - from.x) / cell.x).ceil() as i32;
-            let i1 = ((obstacle.max.x - from.x) / cell.x).floor() as i32;
-            let j0 = ((obstacle.min.y - from.y) / cell.y).ceil() as i32;
-            let j1 = ((obstacle.max.y - from.y) / cell.y).floor() as i32;
-            for j in j0.max(min.1)..=j1.min(max.1) {
-                for i in i0.max(min.0)..=i1.min(max.0) {
-                    let index = grid.index((i, j)).expect("clamped to the grid");
-                    grid.blocked[index] = true;
-                }
+        for obstacle in obstacles {
+            for index in grid.indices_in(obstacle.expand(CLEARANCE)) {
+                grid.near[index] = true;
+            }
+            for index in grid.indices_in(obstacle.expand(MIN_CLEARANCE)) {
+                grid.blocked[index] = true;
             }
         }
         // The stub ends sit right next to their nodes; they must stay reachable.
         for end in [(0, 0), goal] {
             if let Some(index) = grid.index(end) {
                 grid.blocked[index] = false;
+                grid.near[index] = false;
             }
         }
         Some(grid)
+    }
+
+    /// Indices of the grid points inside `rect`, borders included.
+    fn indices_in(&self, rect: Rect) -> Vec<usize> {
+        let last = (
+            self.min.0 + self.columns as i32 - 1,
+            self.min.1 + self.rows as i32 - 1,
+        );
+        let i0 = (((rect.min.x - self.origin.x) / self.cell.x).ceil() as i32).max(self.min.0);
+        let i1 = (((rect.max.x - self.origin.x) / self.cell.x).floor() as i32).min(last.0);
+        let j0 = (((rect.min.y - self.origin.y) / self.cell.y).ceil() as i32).max(self.min.1);
+        let j1 = (((rect.max.y - self.origin.y) / self.cell.y).floor() as i32).min(last.1);
+        (j0..=j1)
+            .flat_map(|j| (i0..=i1).map(move |i| (i, j)))
+            .map(|cell| self.index(cell).expect("clamped to the grid"))
+            .collect()
     }
 
     fn index(&self, (i, j): (i32, i32)) -> Option<usize> {
@@ -238,6 +267,17 @@ impl Grid {
         let state = |index: usize, direction: usize| index * 4 + direction;
         let heuristic =
             |(i, j): (i32, i32)| (i.abs_diff(self.goal.0) + j.abs_diff(self.goal.1)) * STEP_COST;
+        // A walled-in end would make A* explore the whole area before giving up,
+        // on every layout change; bail out early instead.
+        let has_way_out = |(i, j): (i32, i32)| {
+            DIRECTIONS
+                .iter()
+                .filter_map(|(di, dj)| self.index((i + di, j + dj)))
+                .any(|index| !self.blocked[index])
+        };
+        if start != goal && !(has_way_out((0, 0)) && has_way_out(self.goal)) {
+            return None;
+        }
 
         let mut cost = vec![u32::MAX; self.blocked.len() * 4];
         let mut came_from = vec![usize::MAX; self.blocked.len() * 4];
@@ -269,6 +309,9 @@ impl Grid {
                 }
                 if next_index == goal && next_direction != RIGHT {
                     step += TURN_COST;
+                }
+                if self.near[next_index] {
+                    step += NEAR_COST;
                 }
                 let next = state(next_index, next_direction);
                 let next_cost = cost[current] + step;
@@ -343,6 +386,45 @@ mod tests {
         // Leaves rightwards and enters from the left.
         assert!(points[1].x > start.x && points[1].y == start.y);
         assert!(points[points.len() - 2].x < end.x);
+    }
+
+    /// Whether every segment is horizontal or vertical.
+    fn orthogonal(points: &[Pos2]) -> bool {
+        points
+            .windows(2)
+            .all(|s| s[0].x == s[1].x || s[0].y == s[1].y)
+    }
+
+    #[test]
+    fn connections_squeeze_out_between_closely_packed_nodes() {
+        // Two nodes right of the output, `NODE_GAP` away, above and below its
+        // row: the stub end is within `CLEARANCE` of them, but not walled in.
+        let a = node(0.0, 0.0);
+        let (above, below) = (node(170.0, -65.0), node(170.0, 55.0));
+        let (blocker, b) = (node(400.0, 0.0), node(600.0, 0.0));
+        let nodes = [a, above, below, blocker, b];
+
+        let Route::Path(points) = route(pos2(160.0, 45.0), pos2(600.0, 45.0), &nodes, 20.0) else {
+            panic!("expected a routed path");
+        };
+
+        assert!(nodes.iter().all(|rect| !path_hits(&points, *rect)));
+        assert!(orthogonal(&points));
+    }
+
+    #[test]
+    fn nearly_aligned_ends_stay_orthogonal() {
+        // Socket rows 3 units apart: less than half a cell.
+        let (a, blocker, b) = (node(0.0, 0.0), node(250.0, 0.0), node(500.0, 3.0));
+        let (start, end) = (pos2(160.0, 45.0), pos2(500.0, 48.0));
+
+        let Route::Path(points) = route(start, end, &[a, blocker, b], 20.0) else {
+            panic!("expected a routed path");
+        };
+
+        assert_eq!(points.first(), Some(&start));
+        assert_eq!(points.last(), Some(&end));
+        assert!(orthogonal(&points), "{points:?}");
     }
 
     #[test]

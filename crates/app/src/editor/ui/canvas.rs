@@ -47,7 +47,8 @@
 //!
 //! Feedback: the pending source gets an accent ring and a curve that follows the
 //! pointer; hovered sockets and delete buttons light up and show a pointing-hand
-//! cursor. Socket hit areas ([`SOCKET_HIT_SIZE`]) are larger than the drawn dot.
+//! cursor. Socket hit areas ([`SOCKET_HIT_SIZE`]) are larger than the drawn dot,
+//! but stay within half of the gap between nodes, so neighbors never share one.
 //!
 //! Every interactive area uses an id derived from the node ID (not from creation
 //! order), so ids stay stable when nodes are added, deleted or reordered.
@@ -68,6 +69,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
+use super::placement::NODE_GAP;
 use super::routing::{self, Route};
 use super::{
     ACCENT, DANGER, NodeConfig, NodeKind, PANEL_BG, TEXT, TEXT_DIM, node_color, place_new_node,
@@ -95,6 +97,7 @@ const SOCKET_RADIUS: f32 = 5.0;
 /// Extra radius of a hovered socket dot.
 const SOCKET_HOVER_GROW: f32 = 1.5;
 /// Side of a socket's square hit area; larger than the dot so it's easy to hit.
+/// Outside the node it is cut to half of [`NODE_GAP`] (see [`socket_rect`]).
 const SOCKET_HIT_SIZE: f32 = 20.0;
 /// Gap between a socket dot's center and its label.
 const SOCKET_LABEL_GAP: f32 = 11.0;
@@ -805,12 +808,21 @@ fn paint_palette_preview(
     );
 }
 
-/// A socket's square hit area on screen, centered on the socket.
+/// A socket's hit area on screen: a [`SOCKET_HIT_SIZE`] square centered on the
+/// socket, but reaching at most half of [`NODE_GAP`] outside the node, so the
+/// hit areas of two nodes facing each other across the gap never overlap.
 fn socket_rect(node: &NodeWidget, side: SocketKind, index: usize, view: View) -> egui::Rect {
-    egui::Rect::from_center_size(
-        view.pos(node.socket_pos(side, index)),
-        egui::Vec2::splat(view.len(SOCKET_HIT_SIZE)),
-    )
+    let center = node.socket_pos(side, index);
+    let half = SOCKET_HIT_SIZE * 0.5;
+    let outside = half.min(NODE_GAP * 0.5);
+    let (left, right) = match side {
+        SocketKind::Input => (outside, half),
+        SocketKind::Output => (half, outside),
+    };
+    view.rect(egui::Rect::from_min_max(
+        egui::pos2(center.x - left, center.y - half),
+        egui::pos2(center.x + right, center.y + half),
+    ))
 }
 
 /// The delete button's area in canvas coordinates: at the right end of the
