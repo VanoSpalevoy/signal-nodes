@@ -262,7 +262,7 @@ mod tests {
     use super::*;
 
     #[test]
-        fn node_geometry_expands_for_custom_sockets_and_content() {
+    fn node_geometry_expands_for_custom_sockets_and_content() {
         let config = NodeConfig::for_kind(NodeKind::Mixer);
         let node = NodeWidget::new(0, config, egui::Pos2::ZERO);
 

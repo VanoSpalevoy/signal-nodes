@@ -61,7 +61,8 @@
 //!    ([`handle_node_interactions`]). Widgets created later win overlapping clicks,
 //!    so sockets and the delete button sit above their node body, and later nodes
 //!    above earlier ones.
-//! 3. Paint connections, then nodes, then the pending-source curve, then the
+//! 3. Paint connections (fading from the source node's kind color to the
+//!    target's), then nodes, then the pending-source curve, then the
 //!    palette drop preview on top.
 
 use eframe::egui;
@@ -200,7 +201,7 @@ fn show_content(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
     let painter = ui.painter();
     paint_grid(painter, view, viewport);
     let routes = connection_routes(ui, app);
-    paint_connections(&routes, painter, view);
+    paint_connections(app, &routes, painter, view);
     paint_nodes(app, painter, view, &hovered);
     paint_pending_connection(app, painter, view, ui.ctx().pointer_hover_pos());
     paint_palette_preview(app, ui.ctx(), painter, view, pointer);
@@ -540,20 +541,69 @@ fn connection_routes(ui: &egui::Ui, app: &SignalNodesApp) -> Arc<HashMap<SocketR
 }
 
 /// Draws each connection along its route: the plain curve when nothing is in the
-/// way, otherwise the orthogonal path around the nodes with rounded corners.
-fn paint_connections(routes: &HashMap<SocketRef, Route>, painter: &egui::Painter, view: View) {
-    let stroke = egui::Stroke::new(view.len(CONNECTION_WIDTH), ACCENT);
-    for route in routes.values() {
-        match route {
-            Route::Curve(points) => paint_curve(painter, points.map(|p| view.pos(p)), stroke),
+/// way, otherwise the orthogonal path around the nodes with rounded corners. The
+/// line fades from the source node's kind color to the target node's.
+fn paint_connections(
+    app: &SignalNodesApp,
+    routes: &HashMap<SocketRef, Route>,
+    painter: &egui::Painter,
+    view: View,
+) {
+    let kind_color = |node_id: usize| {
+        app.nodes
+            .iter()
+            .find(|node| node.id == node_id)
+            .map_or(ACCENT, |node| node_color(node.config.kind))
+    };
+    let width = view.len(CONNECTION_WIDTH);
+    for (to, route) in routes {
+        let Some(from) = app.connections.get(to) else {
+            continue;
+        };
+        let points = match route {
+            Route::Curve(points) => egui::epaint::CubicBezierShape::from_points_stroke(
+                points.map(|p| view.pos(p)),
+                false,
+                egui::Color32::TRANSPARENT,
+                egui::Stroke::NONE,
+            )
+            .flatten(None),
             Route::Path(points) => {
                 let points: Vec<_> = points.iter().map(|p| view.pos(*p)).collect();
-                painter.add(egui::Shape::line(
-                    rounded_corners(&points, view.len(ROUTE_CORNER_RADIUS)),
-                    stroke,
-                ));
+                rounded_corners(&points, view.len(ROUTE_CORNER_RADIUS))
             }
-        }
+        };
+        paint_gradient_line(
+            painter,
+            &points,
+            width,
+            kind_color(from.node_id),
+            kind_color(to.node_id),
+        );
+    }
+}
+
+/// Draws a polyline whose color changes from `start` to `end` along its length.
+fn paint_gradient_line(
+    painter: &egui::Painter,
+    points: &[egui::Pos2],
+    width: f32,
+    start: egui::Color32,
+    end: egui::Color32,
+) {
+    let total: f32 = points.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if total <= 0.0 {
+        return;
+    }
+    let mut walked = 0.0;
+    for segment in points.windows(2) {
+        let length = segment[0].distance(segment[1]);
+        let t = (walked + length * 0.5) / total;
+        walked += length;
+        painter.line_segment(
+            [segment[0], segment[1]],
+            egui::Stroke::new(width, start.lerp_to_gamma(end, t)),
+        );
     }
 }
 
