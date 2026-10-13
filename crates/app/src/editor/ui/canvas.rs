@@ -42,7 +42,7 @@
 //! | click a palette button                  | add a node in the middle of the visible area    |
 //!
 //! Clicking an input always clears the selection. The connection itself goes
-//! through `SignalForgeApp::connect`, which refuses edges that would create a cycle
+//! through `SignalNodesApp::connect`, which refuses edges that would create a cycle
 //! (including a node feeding itself) and flags that for the debug panel.
 //!
 //! Feedback: the pending source gets an accent ring and a curve that follows the
@@ -74,7 +74,7 @@ use super::routing::{self, Route};
 use super::{
     ACCENT, DANGER, NodeConfig, NodeKind, PANEL_BG, TEXT, TEXT_DIM, node_color, place_new_node,
 };
-use crate::editor::{NodeWidget, SignalForgeApp, SocketKind, SocketRef, Text};
+use crate::editor::{NodeWidget, SignalNodesApp, SocketKind, SocketRef, Text};
 
 /// Corner radius of a node.
 const NODE_ROUNDING: f32 = 8.0;
@@ -158,7 +158,7 @@ struct Hovered {
 }
 
 /// Shows the canvas in the central panel, inside a scroll area.
-pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
+pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
     egui::CentralPanel::default()
         // Edge to edge: no padding or outline around the canvas.
         .frame(egui::Frame::NONE.fill(super::CANVAS_BG))
@@ -175,7 +175,7 @@ pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
 }
 
 /// One frame of the scrollable canvas content; see the module docs for the order of steps.
-fn show_content(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
+fn show_content(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
     let viewport = ui.clip_rect();
     let (canvas_rect, background) = ui.allocate_exact_size(
         content_size(&app.nodes, app.scale, viewport.size()),
@@ -227,7 +227,7 @@ fn drop_rect(kind: NodeKind, pointer: egui::Pos2, view: View, nodes: &[NodeWidge
 
 /// Adds the node requested by a palette click in the middle of the visible area
 /// (or the nearest free spot, see `add_node_at`).
-fn add_requested_node(app: &mut SignalForgeApp, view: View, viewport: egui::Rect) {
+fn add_requested_node(app: &mut SignalNodesApp, view: View, viewport: egui::Rect) {
     let Some(kind) = app.requested_node.take() else {
         return;
     };
@@ -238,7 +238,7 @@ fn add_requested_node(app: &mut SignalForgeApp, view: View, viewport: egui::Rect
 /// Adds the node when a palette drag is released over the canvas viewport
 /// (`pointer` is `None` otherwise). Releases elsewhere are cleaned up by egui.
 fn finish_palette_drop(
-    app: &mut SignalForgeApp,
+    app: &mut SignalNodesApp,
     ui: &egui::Ui,
     view: View,
     pointer: Option<egui::Pos2>,
@@ -332,7 +332,7 @@ fn drag_node(
 /// Deleting and raising change the node list, so they are applied after the loop
 /// (at most one of each per frame).
 fn handle_node_interactions(
-    app: &mut SignalForgeApp,
+    app: &mut SignalNodesApp,
     ui: &mut egui::Ui,
     view: View,
     viewport: egui::Rect,
@@ -478,7 +478,7 @@ fn paint_curve(painter: &egui::Painter, points: [egui::Pos2; 4], stroke: egui::S
 /// Routing runs a path search per blocked connection, so the result is cached in
 /// egui memory and recomputed only when a node moves, is added or removed, or the
 /// connections change.
-fn connection_routes(ui: &egui::Ui, app: &SignalForgeApp) -> Arc<HashMap<SocketRef, Route>> {
+fn connection_routes(ui: &egui::Ui, app: &SignalNodesApp) -> Arc<HashMap<SocketRef, Route>> {
     #[derive(Clone, Default)]
     struct Cache {
         key: u64,
@@ -585,7 +585,7 @@ fn rounded_corners(points: &[egui::Pos2], radius: f32) -> Vec<egui::Pos2> {
 
 /// Draws a translucent curve from the pending source socket to the pointer.
 fn paint_pending_connection(
-    app: &SignalForgeApp,
+    app: &SignalNodesApp,
     painter: &egui::Painter,
     view: View,
     pointer: Option<egui::Pos2>,
@@ -629,7 +629,7 @@ fn paint_grid(painter: &egui::Painter, view: View, viewport: egui::Rect) {
 /// with their labels, and the delete cross, with hover and pending-source
 /// highlights. All text is resolved in the app's language and all sizes follow
 /// the zoom.
-fn paint_nodes(app: &SignalForgeApp, painter: &egui::Painter, view: View, hovered: &Hovered) {
+fn paint_nodes(app: &SignalNodesApp, painter: &egui::Painter, view: View, hovered: &Hovered) {
     let language = app.language;
     let font = |size: f32| egui::FontId::proportional(view.len(size));
     for node in &app.nodes {
@@ -726,7 +726,7 @@ fn paint_delete_button(painter: &egui::Painter, view: View, node: &NodeWidget, h
 /// of the body color, so they read as cut into the outline; a hovered socket
 /// grows and turns accent-colored, and the pending source gets an accent ring.
 fn paint_sockets(
-    app: &SignalForgeApp,
+    app: &SignalNodesApp,
     node: &NodeWidget,
     painter: &egui::Painter,
     view: View,
@@ -780,7 +780,7 @@ fn paint_sockets(
 
 /// Draws a translucent node of the dragged palette kind exactly where it would be dropped.
 fn paint_palette_preview(
-    app: &SignalForgeApp,
+    app: &SignalNodesApp,
     ctx: &egui::Context,
     painter: &egui::Painter,
     view: View,

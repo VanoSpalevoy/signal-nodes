@@ -1,5 +1,5 @@
 [package]
-name = "signal-forge-plugin-host"
+name = "signal-nodes-plugin-host"
 version = "0.1.0"
 edition = "2024"
 

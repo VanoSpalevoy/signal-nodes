@@ -1,13 +1,13 @@
 [package]
-name = "signal-forge-app"
+name = "signal-nodes-app"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "signal-forge"
+name = "signal-nodes"
 path = "src/main.rs"
 
 [dependencies]
 egui = "0.36.2"
 eframe = "0.36.2"
-signal-forge-core = { path = "../core" }
+signal-nodes-core = { path = "../core" }

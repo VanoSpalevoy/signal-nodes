@@ -2712,31 +2712,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "signal-forge-app"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "signal-forge-core",
-]
-
-[[package]]
-name = "signal-forge-core"
-version = "0.1.0"
-
-[[package]]
-name = "signal-forge-plugin-api"
-version = "0.1.0"
-
-[[package]]
-name = "signal-forge-plugin-host"
-version = "0.1.0"
-
-[[package]]
-name = "signal-forge-runtime"
-version = "0.1.0"
-
-[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2745,6 +2720,31 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "signal-nodes-app"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "signal-nodes-core",
+]
+
+[[package]]
+name = "signal-nodes-core"
+version = "0.1.0"
+
+[[package]]
+name = "signal-nodes-plugin-api"
+version = "0.1.0"
+
+[[package]]
+name = "signal-nodes-plugin-host"
+version = "0.1.0"
+
+[[package]]
+name = "signal-nodes-runtime"
+version = "0.1.0"
 
 [[package]]
 name = "simd-adler32"
