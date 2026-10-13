@@ -13,7 +13,7 @@
 use eframe::egui;
 
 use super::{Language, caption, panel_frame, placement};
-use crate::editor::{SignalForgeApp, Text};
+use crate::editor::{SignalNodesApp, Text};
 
 /// Grid size used by Snap to grid, in canvas units.
 const GRID_STEP: f32 = 50.0;
@@ -42,7 +42,7 @@ fn snap_to_grid(nodes: &mut [super::NodeWidget]) {
 }
 
 /// Shows the toolbar as a top panel and applies its actions to `app`.
-pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
+pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
     egui::Panel::top("toolbar")
         .resizable(false)
         .frame(panel_frame(super::PANEL_BG))

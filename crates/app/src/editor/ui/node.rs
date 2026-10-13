@@ -1,7 +1,7 @@
 //! Editor-side node model and geometry.
 //!
 //! This is what the canvas draws and edits. It is separate from the processing
-//! model in `signal-forge-core`, which the editor doesn't use yet.
+//! model in `signal-nodes-core`, which the editor doesn't use yet.
 //!
 //! All positions here are **canvas coordinates**: `(0, 0)` is the top-left of the
 //! scrollable canvas content, independent of scrolling and window layout. The
@@ -81,7 +81,7 @@ impl SocketKind {
 
 /// Address of one socket: node, side and row.
 ///
-/// Used as both key and value of `SignalForgeApp::connections`.
+/// Used as both key and value of `SignalNodesApp::connections`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::editor) struct SocketRef {
     /// ID of the node ([`NodeWidget::id`]).
@@ -201,7 +201,7 @@ impl NodeConfig {
 /// A node placed on the canvas.
 #[derive(Clone, Debug)]
 pub(in crate::editor) struct NodeWidget {
-    /// Slot from `SignalForgeApp::free_node_ids`; unique among live nodes and
+    /// Slot from `SignalNodesApp::free_node_ids`; unique among live nodes and
     /// reused after the node is deleted. Shown in the node title.
     pub(in crate::editor) id: usize,
     pub(super) config: NodeConfig,
@@ -262,7 +262,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_geometry_expands_for_custom_sockets_and_content() {
+        fn node_geometry_expands_for_custom_sockets_and_content() {
         let config = NodeConfig::for_kind(NodeKind::Mixer);
         let node = NodeWidget::new(0, config, egui::Pos2::ZERO);
 

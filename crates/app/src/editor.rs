@@ -1,6 +1,6 @@
 //! Editor state and the `eframe` application entry.
 //!
-//! [`SignalForgeApp`] owns the whole graph being edited (nodes and connections) and
+//! [`SignalNodesApp`] owns the whole graph being edited (nodes and connections) and
 //! the transient UI state (socket selection, language, zoom). Rendering and input
 //! handling live in the [`ui`] module, which mutates this state directly. Graph
 //! edits that have rules (adding, removing, connecting) are methods here, so they
@@ -29,7 +29,7 @@ const MAX_NODE_COUNT: usize = 256;
 /// - `connections` never contains a cycle (enforced by [`connect`](Self::connect));
 /// - nodes never overlap: adds go through [`add_node_at`](Self::add_node_at), drags
 ///   and snapping through `ui::placement`.
-pub struct SignalForgeApp {
+pub struct SignalNodesApp {
     /// Nodes in paint order: later nodes are drawn on top and win overlapping clicks.
     nodes: Vec<NodeWidget>,
     /// Graph edges, keyed by the **input** socket with the output socket as value,
@@ -56,7 +56,7 @@ pub struct SignalForgeApp {
     scale: f32,
 }
 
-impl Default for SignalForgeApp {
+impl Default for SignalNodesApp {
     fn default() -> Self {
         Self {
             nodes: Vec::new(),
@@ -72,7 +72,7 @@ impl Default for SignalForgeApp {
     }
 }
 
-impl SignalForgeApp {
+impl SignalNodesApp {
     /// Creates the editor and installs its theme once for the app's lifetime.
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         ui::install_theme(&creation_context.egui_ctx);
@@ -163,7 +163,7 @@ impl SignalForgeApp {
     }
 }
 
-impl eframe::App for SignalForgeApp {
+impl eframe::App for SignalNodesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui::render(self, ui);
     }
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn connect_replaces_existing_source() {
-        let mut app = SignalForgeApp::default();
+        let mut app = SignalNodesApp::default();
 
         assert!(app.connect(output(0), input(2, 0)));
         assert!(app.connect(output(1), input(2, 0)));
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn connect_refuses_cycles() {
-        let mut app = SignalForgeApp::default();
+        let mut app = SignalNodesApp::default();
 
         assert!(!app.connect(output(0), input(0, 0)));
         assert!(app.connection_refused);
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn remove_node_cleans_up_and_frees_id() {
-        let mut app = SignalForgeApp::default();
+        let mut app = SignalNodesApp::default();
         for _ in 0..3 {
             app.add_node_at(NodeKind::Gain, egui::Pos2::ZERO);
         }
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn nodes_added_at_the_same_spot_do_not_overlap() {
-        let mut app = SignalForgeApp::default();
+        let mut app = SignalNodesApp::default();
         for _ in 0..5 {
             app.add_node_at(NodeKind::Mixer, egui::pos2(100.0, 100.0));
         }
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn raise_node_moves_it_to_the_top() {
-        let mut app = SignalForgeApp::default();
+        let mut app = SignalNodesApp::default();
         for _ in 0..3 {
             app.add_node_at(NodeKind::Gain, egui::Pos2::ZERO);
         }

@@ -1,7 +1,7 @@
 //! Editor UI: panels, the node canvas and the editor-side node model.
 //!
 //! The UI is immediate mode: [`render`] runs every frame, draws everything from
-//! [`SignalForgeApp`] and applies that frame's input to it directly. No widget state
+//! [`SignalNodesApp`] and applies that frame's input to it directly. No widget state
 //! is kept outside the app (apart from small per-widget scratch in egui memory).
 //!
 //! # Layout
@@ -48,7 +48,7 @@ mod toolbar;
 
 use eframe::egui;
 
-use super::SignalForgeApp;
+use super::SignalNodesApp;
 pub(super) use super::localization::Language;
 pub(super) use node::{NodeConfig, NodeKind, NodeWidget, SocketKind, SocketRef};
 pub(super) use placement::place_new_node;
@@ -80,7 +80,7 @@ const DANGER: egui::Color32 = egui::Color32::from_rgb(235, 96, 96);
 const CONTROL_RADIUS: u8 = 6;
 
 /// Draws the whole editor for one frame: panels in layout order.
-pub(super) fn render(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
+pub(super) fn render(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
     toolbar::show(app, ui);
     debug::show(app, ui);
     palette::show(app, ui);

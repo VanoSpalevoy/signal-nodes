@@ -13,7 +13,7 @@
 use eframe::egui;
 
 use super::{caption, node_color, panel_frame};
-use crate::editor::{NodeKind, SignalForgeApp, Text};
+use crate::editor::{NodeKind, SignalNodesApp, Text};
 
 /// Palette width, including the panel frame's margins.
 const PALETTE_WIDTH: f32 = 136.0;
@@ -21,7 +21,7 @@ const PALETTE_WIDTH: f32 = 136.0;
 const BUTTON_HEIGHT: f32 = 36.0;
 
 /// Shows the palette as a fixed-width left panel.
-pub(super) fn show(app: &mut SignalForgeApp, ui: &mut egui::Ui) {
+pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
     egui::Panel::left("palette")
         .resizable(false)
         .exact_size(PALETTE_WIDTH)
