@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+libloading = "0.8"
+signal-nodes-core = { path = "../core" }
+signal-nodes-plugin-api = { path = "../plugin-api" }
+
+[dev-dependencies]
+signal-nodes-plugin-std = { path = "../plugin-std" }

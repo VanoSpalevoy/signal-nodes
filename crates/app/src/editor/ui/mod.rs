@@ -50,8 +50,9 @@ use eframe::egui;
 
 use super::SignalNodesApp;
 pub(super) use super::localization::Language;
+pub(super) use canvas::RouteCache;
 pub(super) use node::{NodeConfig, NodeKind, NodeWidget, SocketKind, SocketRef};
-pub(super) use placement::place_new_node;
+pub(super) use placement::{free_pos, place_new_node, slide};
 
 /// Darkest background: text edits, slider rails and other "extreme" backgrounds.
 const WINDOW_BG: egui::Color32 = egui::Color32::from_rgb(6, 7, 9);

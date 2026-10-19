@@ -2,7 +2,7 @@
 //!
 //! - **Snap to grid** — snaps every node's top-left corner to a [`GRID_STEP`] grid
 //!   anchored at the canvas origin, moving nodes to the nearest free grid point
-//!   where snapping would make them overlap.
+//!   where snapping would make them overlap (`SignalNodesApp::snap_to_grid`).
 //! - **Scale** — canvas zoom ([`SCALE_RANGE`], in [`SCALE_STEP`] steps) stored in
 //!   `app.scale` and applied by the canvas.
 //! - **Language** — switches the UI language; takes effect on the next frame.
@@ -12,7 +12,7 @@
 
 use eframe::egui;
 
-use super::{Language, caption, panel_frame, placement};
+use super::{Language, caption, panel_frame};
 use crate::editor::{SignalNodesApp, Text};
 
 /// Grid size used by Snap to grid, in canvas units.
@@ -22,24 +22,6 @@ const SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=2.0;
 /// Zoom slider step. Coarse steps keep the number of distinct font sizes (each
 /// one is rasterized into egui's font atlas) small.
 const SCALE_STEP: f64 = 0.1;
-
-/// Snaps every node to the nearest [`GRID_STEP`] grid point that keeps clear of
-/// the others. Node positions are canvas coordinates, so the grid starts at the
-/// canvas origin. Nodes are placed one by one, each against the current
-/// positions of all the others.
-fn snap_to_grid(nodes: &mut [super::NodeWidget]) {
-    for index in 0..nodes.len() {
-        let obstacles: Vec<_> = nodes
-            .iter()
-            .enumerate()
-            .filter(|(other, _)| *other != index)
-            .map(|(_, node)| node.rect())
-            .collect();
-        let node = &mut nodes[index];
-        let snapped = (node.pos / GRID_STEP).round() * GRID_STEP;
-        node.pos = placement::free_pos(snapped, node.config.size(), &obstacles, GRID_STEP);
-    }
-}
 
 /// Shows the toolbar as a top panel and applies its actions to `app`.
 pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
@@ -53,7 +35,7 @@ pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
                 caption(ui, app.language.text(Text::Tools));
                 ui.add_space(12.0);
                 if ui.button(app.language.text(Text::SnapToGrid)).clicked() {
-                    snap_to_grid(&mut app.nodes);
+                    app.snap_to_grid(GRID_STEP);
                 }
                 ui.separator();
                 ui.add(

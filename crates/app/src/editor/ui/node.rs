@@ -206,7 +206,7 @@ pub(in crate::editor) struct NodeWidget {
     pub(in crate::editor) id: usize,
     pub(super) config: NodeConfig,
     /// Top-left corner in canvas coordinates; never negative (`placement` keeps it so).
-    pub(super) pos: egui::Pos2,
+    pub(in crate::editor) pos: egui::Pos2,
 }
 
 impl NodeWidget {

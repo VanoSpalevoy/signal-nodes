@@ -50,7 +50,7 @@ pub(super) fn blocked(rect: egui::Rect, obstacles: &[egui::Rect]) -> bool {
 /// older layout) can always be dragged free. Both axis orders (x then y, y then x)
 /// are tried and the result closer to `target` wins, so the node slides around
 /// corners in the direction the pointer went.
-pub(super) fn slide(
+pub(in crate::editor) fn slide(
     current: egui::Rect,
     target: egui::Pos2,
     obstacles: &[egui::Rect],
@@ -112,7 +112,7 @@ fn sweep_y(rect: egui::Rect, y: f32, obstacles: &[egui::Rect]) -> egui::Rect {
 /// Searches square rings of growing radius and takes the closest free candidate
 /// of the first ring that has one. Falls back to `wanted` if nothing is free
 /// within [`MAX_SEARCH_RINGS`] rings.
-pub(super) fn free_pos(
+pub(in crate::editor) fn free_pos(
     wanted: egui::Pos2,
     size: egui::Vec2,
     obstacles: &[egui::Rect],
