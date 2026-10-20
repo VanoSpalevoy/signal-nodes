@@ -1,16 +1,16 @@
 [package]
-name = "signal-nodes-app"
+name = "v-signal-nodes-app"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "signal-nodes"
+name = "v-signal-nodes"
 path = "src/main.rs"
 
 [dependencies]
 egui = "0.36.2"
 eframe = "0.36.2"
-signal-nodes-core = { path = "../core" }
-signal-nodes-plugin-host = { path = "../plugin-host" }
-signal-nodes-plugin-std = { path = "../plugin-std" }
-signal-nodes-plugin-stub = { path = "../plugin-stub" }
+v-signal-nodes-core = { path = "../core" }
+v-signal-nodes-plugin-host = { path = "../plugin-host" }
+v-signal-nodes-plugin-std = { path = "../plugin-std" }
+v-signal-nodes-plugin-stub = { path = "../plugin-stub" }

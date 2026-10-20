@@ -2722,57 +2722,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-nodes-app"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "signal-nodes-core",
- "signal-nodes-plugin-host",
- "signal-nodes-plugin-std",
- "signal-nodes-plugin-stub",
-]
-
-[[package]]
-name = "signal-nodes-core"
-version = "0.1.0"
-
-[[package]]
-name = "signal-nodes-plugin-api"
-version = "0.1.0"
-dependencies = [
- "signal-nodes-core",
-]
-
-[[package]]
-name = "signal-nodes-plugin-host"
-version = "0.1.0"
-dependencies = [
- "libloading",
- "signal-nodes-core",
- "signal-nodes-plugin-api",
- "signal-nodes-plugin-std",
-]
-
-[[package]]
-name = "signal-nodes-plugin-std"
-version = "0.1.0"
-dependencies = [
- "signal-nodes-plugin-api",
-]
-
-[[package]]
-name = "signal-nodes-plugin-stub"
-version = "0.1.0"
-dependencies = [
- "signal-nodes-plugin-api",
-]
-
-[[package]]
-name = "signal-nodes-runtime"
-version = "0.1.0"
-
-[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3223,6 +3172,57 @@ dependencies = [
  "serde_core",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "v-signal-nodes-app"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "v-signal-nodes-core",
+ "v-signal-nodes-plugin-host",
+ "v-signal-nodes-plugin-std",
+ "v-signal-nodes-plugin-stub",
+]
+
+[[package]]
+name = "v-signal-nodes-core"
+version = "0.1.0"
+
+[[package]]
+name = "v-signal-nodes-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "v-signal-nodes-core",
+]
+
+[[package]]
+name = "v-signal-nodes-plugin-host"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "v-signal-nodes-core",
+ "v-signal-nodes-plugin-api",
+ "v-signal-nodes-plugin-std",
+]
+
+[[package]]
+name = "v-signal-nodes-plugin-std"
+version = "0.1.0"
+dependencies = [
+ "v-signal-nodes-plugin-api",
+]
+
+[[package]]
+name = "v-signal-nodes-plugin-stub"
+version = "0.1.0"
+dependencies = [
+ "v-signal-nodes-plugin-api",
+]
+
+[[package]]
+name = "v-signal-nodes-runtime"
+version = "0.1.0"
 
 [[package]]
 name = "vello_common"

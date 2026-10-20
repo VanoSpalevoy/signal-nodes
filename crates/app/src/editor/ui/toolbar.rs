@@ -2,7 +2,7 @@
 //!
 //! - **Snap to grid** — snaps every node's top-left corner to a [`GRID_STEP`] grid
 //!   anchored at the canvas origin, moving nodes to the nearest free grid point
-//!   where snapping would make them overlap (`SignalNodesApp::snap_to_grid`).
+//!   where snapping would make them overlap (`VSignalNodesApp::snap_to_grid`).
 //! - **Scale** — canvas zoom ([`SCALE_RANGE`], in [`SCALE_STEP`] steps) stored in
 //!   `app.scale` and applied by the canvas.
 //! - **Language** — switches the UI language; takes effect on the next frame.
@@ -13,7 +13,7 @@
 use eframe::egui;
 
 use super::{Language, caption, panel_frame};
-use crate::editor::{SignalNodesApp, Text};
+use crate::editor::{Text, VSignalNodesApp};
 
 /// Grid size used by Snap to grid, in canvas units.
 const GRID_STEP: f32 = 50.0;
@@ -24,7 +24,7 @@ const SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=2.0;
 const SCALE_STEP: f64 = 0.1;
 
 /// Shows the toolbar as a top panel and applies its actions to `app`.
-pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
+pub(super) fn show(app: &mut VSignalNodesApp, ui: &mut egui::Ui) {
     egui::Panel::top("toolbar")
         .resizable(false)
         .frame(panel_frame(super::PANEL_BG))

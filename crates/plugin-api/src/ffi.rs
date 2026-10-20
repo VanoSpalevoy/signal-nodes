@@ -34,9 +34,9 @@ use crate::{
 };
 
 /// Name of the exported [`VersionFn`].
-pub const VERSION_SYMBOL: &[u8] = b"signal_nodes_plugin_api_version\0";
+pub const VERSION_SYMBOL: &[u8] = b"v_signal_nodes_plugin_api_version\0";
 /// Name of the exported [`EntryFn`].
-pub const ENTRY_SYMBOL: &[u8] = b"signal_nodes_plugin_entry\0";
+pub const ENTRY_SYMBOL: &[u8] = b"v_signal_nodes_plugin_entry\0";
 
 /// Returns the API version the library was built against.
 pub type VersionFn = unsafe extern "C" fn() -> u32;

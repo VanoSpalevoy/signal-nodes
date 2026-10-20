@@ -14,7 +14,7 @@
 //!   through the C ABI in [`ffi`], and the host wraps it back into these traits.
 //!
 //! ```ignore
-//! use signal_nodes_plugin_api::*;
+//! use v_signal_nodes_plugin_api::*;
 //!
 //! struct MyPlugin;
 //!
@@ -33,7 +33,7 @@ use std::slice;
 
 pub mod ffi;
 
-pub use signal_nodes_core::{
+pub use v_signal_nodes_core::{
     AppError, NodeKind, NodeSocket, NodeSpec, ParamKind, ParamSpec, ParamValue, SampleBlock,
     SignalEnvironment, SignalType, SocketDirection, Translation,
 };
@@ -257,12 +257,12 @@ unsafe fn slice_from_raw<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 macro_rules! export_plugin {
     ($plugin:expr) => {
         #[unsafe(no_mangle)]
-        pub extern "C" fn signal_nodes_plugin_api_version() -> u32 {
+        pub extern "C" fn v_signal_nodes_plugin_api_version() -> u32 {
             $crate::API_VERSION
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn signal_nodes_plugin_entry() -> $crate::ffi::FfiPlugin {
+        pub extern "C" fn v_signal_nodes_plugin_entry() -> $crate::ffi::FfiPlugin {
             $crate::ffi::export(|| $plugin)
         }
     };

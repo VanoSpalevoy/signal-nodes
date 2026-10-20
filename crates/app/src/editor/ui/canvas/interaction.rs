@@ -1,13 +1,13 @@
 //! Canvas input: palette clicks and drops, and everything done to nodes with the
 //! pointer (see the interaction table in the [`canvas`](super) docs).
 //!
-//! Every change goes through a `SignalNodesApp` method; this module only turns
+//! Every change goes through a `VSignalNodesApp` method; this module only turns
 //! egui responses into those calls.
 
 use eframe::egui;
 
 use super::{Hovered, View, delete_button_rect, drop_rect, socket_rect};
-use crate::editor::{NodeConfig, NodeKind, SignalNodesApp, SocketKind, SocketRef, Text};
+use crate::editor::{NodeConfig, NodeKind, SocketKind, SocketRef, Text, VSignalNodesApp};
 
 /// Distance from the viewport edge at which dragging a node starts scrolling (screen points).
 const EDGE_SCROLL_ZONE: f32 = 32.0;
@@ -16,7 +16,7 @@ const EDGE_SCROLL_SPEED: f32 = 600.0;
 
 /// Adds the node requested by a palette click in the middle of the visible area
 /// (or the nearest free spot, see `add_node_at`).
-pub(super) fn add_requested_node(app: &mut SignalNodesApp, view: View, viewport: egui::Rect) {
+pub(super) fn add_requested_node(app: &mut VSignalNodesApp, view: View, viewport: egui::Rect) {
     let Some(kind) = app.requested_node.take() else {
         return;
     };
@@ -27,7 +27,7 @@ pub(super) fn add_requested_node(app: &mut SignalNodesApp, view: View, viewport:
 /// Adds the node when a palette drag is released over the canvas viewport
 /// (`pointer` is `None` otherwise). Releases elsewhere are cleaned up by egui.
 pub(super) fn finish_palette_drop(
-    app: &mut SignalNodesApp,
+    app: &mut VSignalNodesApp,
     ui: &egui::Ui,
     view: View,
     pointer: Option<egui::Pos2>,
@@ -79,12 +79,12 @@ fn edge_scroll(ui: &egui::Ui, viewport: egui::Rect, pointer: egui::Pos2) {
 /// can't drift away from the cursor when the view scrolls mid-drag (edge scroll,
 /// mouse wheel or trackpad).
 ///
-/// The move itself is `SignalNodesApp::drag_to` (the node may pass over others);
+/// The move itself is `VSignalNodesApp::drag_to` (the node may pass over others);
 /// the whole gesture is one drag from `begin_drag` to `end_drag`, which resolves
 /// the overlaps. After `cancel_drag` (`Esc`) the rest of the
 /// gesture is ignored. The grab offset is stored in egui memory under the body's id.
 fn drag_node(
-    app: &mut SignalNodesApp,
+    app: &mut VSignalNodesApp,
     ui: &egui::Ui,
     node_id: usize,
     response: &egui::Response,
@@ -124,7 +124,7 @@ fn drag_node(
 /// Deleting and raising change the node list, so they are applied after the loop
 /// (at most one of each per frame).
 pub(super) fn handle_node_interactions(
-    app: &mut SignalNodesApp,
+    app: &mut VSignalNodesApp,
     ui: &mut egui::Ui,
     view: View,
     viewport: egui::Rect,

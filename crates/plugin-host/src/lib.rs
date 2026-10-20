@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
-use signal_nodes_core::{AppError, Node, NodeFactory, NodeSpec};
-use signal_nodes_plugin_api::{API_VERSION, NodeProcessor, NodeProvider, Plugin, Registrar};
+use v_signal_nodes_core::{AppError, Node, NodeFactory, NodeSpec};
+use v_signal_nodes_plugin_api::{API_VERSION, NodeProcessor, NodeProvider, Plugin, Registrar};
 
 mod dynamic;
 
@@ -128,8 +128,8 @@ impl PluginHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_nodes_core::{NodeKind, NodeSocket};
-    use signal_nodes_plugin_api::{ProcessIo, RawBuffer, ffi};
+    use v_signal_nodes_core::{NodeKind, NodeSocket};
+    use v_signal_nodes_plugin_api::{ProcessIo, RawBuffer, ffi};
 
     struct Gain;
 

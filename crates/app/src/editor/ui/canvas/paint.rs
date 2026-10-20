@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use super::{CONNECTION_MIN_HANDLE, HEADER_HEIGHT, Hovered, View, delete_button_rect, drop_rect};
 use crate::editor::ui::routing::{self, Route};
 use crate::editor::ui::{ACCENT, DANGER, NodeKind, PANEL_BG, TEXT, TEXT_DIM, node_color};
-use crate::editor::{NodeWidget, SignalNodesApp, SocketKind, SocketRef};
+use crate::editor::{NodeWidget, SocketKind, SocketRef, VSignalNodesApp};
 
 /// Corner radius of a node.
 const NODE_ROUNDING: f32 = 8.0;
@@ -51,7 +51,7 @@ const GRID_DOT: egui::Color32 = egui::Color32::from_rgb(28, 30, 37);
 /// top. `viewport` is the visible screen area, `pointer` the pointer position if
 /// it is over it.
 pub(super) fn paint(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     ui: &egui::Ui,
     view: View,
     viewport: egui::Rect,
@@ -84,7 +84,7 @@ fn paint_curve(painter: &egui::Painter, points: [egui::Pos2; 4], stroke: egui::S
 /// built (by their route's bounds, padded for the line width and for a curve
 /// bulging slightly past its sampled polyline).
 fn paint_connections(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     painter: &egui::Painter,
     view: View,
     viewport: egui::Rect,
@@ -248,7 +248,7 @@ fn rounded_corners(points: &[egui::Pos2], radius: f32) -> Vec<egui::Pos2> {
 
 /// Draws a translucent curve from the pending source socket to the pointer.
 fn paint_pending_connection(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     painter: &egui::Painter,
     view: View,
     pointer: Option<egui::Pos2>,
@@ -292,7 +292,7 @@ fn paint_grid(painter: &egui::Painter, view: View, viewport: egui::Rect) {
 /// with their labels, and the delete cross, with hover and pending-source
 /// highlights. All text is resolved in the app's language and all sizes follow
 /// the zoom.
-fn paint_nodes(app: &SignalNodesApp, painter: &egui::Painter, view: View, hovered: &Hovered) {
+fn paint_nodes(app: &VSignalNodesApp, painter: &egui::Painter, view: View, hovered: &Hovered) {
     let language = app.language;
     let font = |size: f32| egui::FontId::proportional(view.len(size));
     for node in &app.nodes {
@@ -389,7 +389,7 @@ fn paint_delete_button(painter: &egui::Painter, view: View, node: &NodeWidget, h
 /// of the body color, so they read as cut into the outline; a hovered socket
 /// grows and turns accent-colored, and the pending source gets an accent ring.
 fn paint_sockets(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     node: &NodeWidget,
     painter: &egui::Painter,
     view: View,
@@ -462,9 +462,9 @@ fn paint_ghost(
 }
 
 /// While a node is dragged, draws a ghost wherever a node would move if it were
-/// dropped now (`SignalNodesApp::drop_moves`): the dragged node's landing spot,
+/// dropped now (`VSignalNodesApp::drop_moves`): the dragged node's landing spot,
 /// or the new places of the neighbors it pushes aside.
-fn paint_drop_preview(app: &SignalNodesApp, painter: &egui::Painter, view: View) {
+fn paint_drop_preview(app: &VSignalNodesApp, painter: &egui::Painter, view: View) {
     for (node_id, pos) in app.drop_moves() {
         if let Some(node) = app.nodes.iter().find(|node| node.id == node_id) {
             let rect = egui::Rect::from_min_size(pos, node.rect().size());
@@ -475,7 +475,7 @@ fn paint_drop_preview(app: &SignalNodesApp, painter: &egui::Painter, view: View)
 
 /// Draws a translucent node of the dragged palette kind exactly where it would be dropped.
 fn paint_palette_preview(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     ctx: &egui::Context,
     painter: &egui::Painter,
     view: View,

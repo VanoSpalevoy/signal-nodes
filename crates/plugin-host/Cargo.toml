@@ -1,12 +1,12 @@
 [package]
-name = "signal-nodes-plugin-host"
+name = "v-signal-nodes-plugin-host"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 libloading = "0.8"
-signal-nodes-core = { path = "../core" }
-signal-nodes-plugin-api = { path = "../plugin-api" }
+v-signal-nodes-core = { path = "../core" }
+v-signal-nodes-plugin-api = { path = "../plugin-api" }
 
 [dev-dependencies]
-signal-nodes-plugin-std = { path = "../plugin-std" }
+v-signal-nodes-plugin-std = { path = "../plugin-std" }

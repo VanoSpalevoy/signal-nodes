@@ -5,7 +5,7 @@
 //! and the editor turns that node into a canvas widget. The processor leaves its
 //! output silent.
 
-use signal_nodes_plugin_api::{
+use v_signal_nodes_plugin_api::{
     AppError, NodeKind, NodeProcessor, NodeProvider, NodeSocket, NodeSpec, ParamSpec, Plugin,
     ProcessIo, Registrar,
 };

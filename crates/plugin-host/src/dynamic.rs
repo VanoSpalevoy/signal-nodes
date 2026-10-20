@@ -9,11 +9,11 @@
 use std::ffi::OsStr;
 use std::sync::Arc;
 
-use signal_nodes_core::{AppError, NodeSpec};
-use signal_nodes_plugin_api::ffi::{
+use v_signal_nodes_core::{AppError, NodeSpec};
+use v_signal_nodes_plugin_api::ffi::{
     self, EntryFn, FfiPlugin, FfiProcessArgs, FfiProcessor, FfiSlice, VersionFn,
 };
-use signal_nodes_plugin_api::{
+use v_signal_nodes_plugin_api::{
     API_VERSION, NodeProcessor, NodeProvider, Plugin, ProcessIo, Registrar,
 };
 

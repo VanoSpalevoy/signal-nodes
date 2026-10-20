@@ -14,13 +14,13 @@
 use eframe::egui;
 
 use super::{TEXT_DIM, caption, panel_frame};
-use crate::editor::{MAX_NODE_COUNT, SignalNodesApp, Text};
+use crate::editor::{MAX_NODE_COUNT, Text, VSignalNodesApp};
 
 /// Height after which the connection list scrolls instead of growing the panel.
 const CONNECTIONS_MAX_HEIGHT: f32 = 120.0;
 
 /// Shows the debug panel along the bottom of the window.
-pub(super) fn show(app: &SignalNodesApp, ui: &mut egui::Ui) {
+pub(super) fn show(app: &VSignalNodesApp, ui: &mut egui::Ui) {
     egui::Panel::bottom("debug")
         .resizable(false)
         .frame(panel_frame(super::PANEL_BG))

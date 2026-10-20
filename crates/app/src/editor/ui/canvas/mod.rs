@@ -3,7 +3,7 @@
 //! | Module            | Role                                                        |
 //! |-------------------|-------------------------------------------------------------|
 //! | this one          | the scroll area, [`View`], frame order, shared geometry     |
-//! | [`interaction`]   | pointer and palette input, turned into `SignalNodesApp` calls |
+//! | [`interaction`]   | pointer and palette input, turned into `VSignalNodesApp` calls |
 //! | [`connections`]   | [`RouteCache`]: connection routes kept up to date per frame |
 //! | [`paint`]         | drawing everything, read-only                               |
 //!
@@ -55,10 +55,10 @@
 //! | click a palette button                  | add a node in the middle of the visible area    |
 //!
 //! Clicking an input always clears the selection. The connection itself goes
-//! through `SignalNodesApp::connect`, which refuses edges that would create a cycle
+//! through `VSignalNodesApp::connect`, which refuses edges that would create a cycle
 //! (including a node feeding itself) and flags that for the debug panel.
-//! Disconnecting goes through `SignalNodesApp::disconnect_input` / `disconnect_output`,
-//! moving through `SignalNodesApp::begin_drag` / `drag_to` / `end_drag` / `cancel_drag`.
+//! Disconnecting goes through `VSignalNodesApp::disconnect_input` / `disconnect_output`,
+//! moving through `VSignalNodesApp::begin_drag` / `drag_to` / `end_drag` / `cancel_drag`.
 //!
 //! Feedback: while a node is dragged, ghosts show where nodes will be once it is
 //! dropped; the pending source gets an accent ring and a curve that follows the
@@ -91,7 +91,7 @@ use eframe::egui;
 
 use super::placement::NODE_GAP;
 use super::{NodeConfig, NodeKind, place_new_node};
-use crate::editor::{NodeWidget, SignalNodesApp, SocketKind, SocketRef};
+use crate::editor::{NodeWidget, SocketKind, SocketRef, VSignalNodesApp};
 pub(in crate::editor) use connections::RouteCache;
 
 /// Height of the tinted header band holding the title and the delete button.
@@ -158,7 +158,7 @@ struct LastView {
 /// When the zoom changed since the last frame, the scroll offset is adjusted so
 /// the canvas point in the middle of the view stays there, instead of the view
 /// sliding towards or away from the canvas origin.
-pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
+pub(super) fn show(app: &mut VSignalNodesApp, ui: &mut egui::Ui) {
     egui::CentralPanel::default()
         // Edge to edge: no padding or outline around the canvas.
         .frame(egui::Frame::NONE.fill(super::CANVAS_BG))
@@ -194,7 +194,7 @@ pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
 }
 
 /// One frame of the scrollable canvas content; see the module docs for the order of steps.
-fn show_content(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
+fn show_content(app: &mut VSignalNodesApp, ui: &mut egui::Ui) {
     let viewport = ui.clip_rect();
     let (canvas_rect, background) = ui.allocate_exact_size(
         content_size(&app.nodes, app.scale, viewport.size()),

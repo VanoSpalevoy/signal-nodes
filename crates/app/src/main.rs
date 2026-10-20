@@ -1,4 +1,4 @@
-//! Signal Nodes editor binary: opens the native window and runs [`editor::SignalNodesApp`].
+//! v-signal-nodes editor binary: opens the native window and runs [`editor::VSignalNodesApp`].
 //!
 //! Release builds on Windows use the GUI subsystem, so no console window appears.
 
@@ -13,8 +13,8 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Signal Nodes",
+        "v-signal-nodes",
         options,
-        Box::new(|creation_context| Ok(Box::new(editor::SignalNodesApp::new(creation_context)))),
+        Box::new(|creation_context| Ok(Box::new(editor::VSignalNodesApp::new(creation_context)))),
     )
 }

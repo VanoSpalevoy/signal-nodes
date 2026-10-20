@@ -21,7 +21,7 @@ const REFRESH_SHARE: f32 = 0.5;
 
 /// One connection's route, with what later connections need to route around it.
 pub(super) struct RoutedConnection {
-    /// The input socket (the connection's key in `SignalNodesApp::connections`).
+    /// The input socket (the connection's key in `VSignalNodesApp::connections`).
     pub(super) to: SocketRef,
     /// The output socket feeding `to`.
     pub(super) from: SocketRef,
@@ -101,7 +101,7 @@ impl RouteCache {
     }
 
     /// Brings the routes up to date with `nodes` and `connections`
-    /// (`SignalNodesApp::connections`: input → output).
+    /// (`VSignalNodesApp::connections`: input → output).
     ///
     /// When neither changed since an update that finished everything, returns at
     /// once (an order-independent fingerprint of both, no per-connection work).
@@ -317,7 +317,7 @@ impl Hasher for KeyHasher {
 mod tests {
     use super::*;
     use crate::editor::{NodeConfig, SocketKind, ui::std_kind};
-    use signal_nodes_plugin_std::{GAIN, SINK, SOURCE};
+    use v_signal_nodes_plugin_std::{GAIN, SINK, SOURCE};
 
     fn node(id: usize, type_id: &str, x: f32, y: f32) -> NodeWidget {
         NodeWidget::new(

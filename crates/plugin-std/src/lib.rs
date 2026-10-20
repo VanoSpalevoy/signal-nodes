@@ -13,7 +13,7 @@
 
 use std::f32::consts::TAU;
 
-use signal_nodes_plugin_api::{
+use v_signal_nodes_plugin_api::{
     AppError, NodeKind, NodeProcessor, NodeProvider, NodeSocket, NodeSpec, ParamSpec, Plugin,
     ProcessIo, Registrar,
 };
@@ -247,7 +247,7 @@ impl NodeProcessor for SinkProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_nodes_plugin_api::{ParamValue, RawBuffer};
+    use v_signal_nodes_plugin_api::{ParamValue, RawBuffer};
 
     fn providers() -> Vec<Box<dyn NodeProvider>> {
         vec![

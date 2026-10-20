@@ -1,14 +1,14 @@
 //! Editor state and the `eframe` application entry.
 //!
-//! [`SignalNodesApp`] owns the whole graph being edited (nodes and connections) and
+//! [`VSignalNodesApp`] owns the whole graph being edited (nodes and connections) and
 //! the transient UI state (socket selection, language, zoom). Rendering and input
 //! handling live in the [`ui`] module, which mutates this state directly. Graph
 //! edits that have rules (adding, removing, connecting) are methods here, so they
 //! can be unit-tested without egui.
 
 use eframe::egui;
-use signal_nodes_plugin_host::PluginHost;
 use std::collections::{HashMap, HashSet};
+use v_signal_nodes_plugin_host::PluginHost;
 
 mod localization;
 mod ui;
@@ -36,7 +36,7 @@ const MAX_NODE_COUNT: usize = 256;
 ///   [`drag_to`](Self::drag_to), [`cancel_drag`](Self::cancel_drag)), never by the
 ///   UI writing `pos` itself;
 /// - `drag` only refers to a node that exists.
-pub struct SignalNodesApp {
+pub struct VSignalNodesApp {
     /// Nodes in paint order: later nodes are drawn on top and win overlapping clicks.
     nodes: Vec<NodeWidget>,
     /// Graph edges, keyed by the **input** socket with the output socket as value,
@@ -73,8 +73,8 @@ pub struct SignalNodesApp {
     palette: Vec<NodeKind>,
 }
 
-/// A node drag in progress, from [`begin_drag`](SignalNodesApp::begin_drag) to
-/// [`end_drag`](SignalNodesApp::end_drag): the whole gesture is one move from
+/// A node drag in progress, from [`begin_drag`](VSignalNodesApp::begin_drag) to
+/// [`end_drag`](VSignalNodesApp::end_drag): the whole gesture is one move from
 /// `from` to wherever the node ends up.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct NodeDrag {
@@ -83,7 +83,7 @@ struct NodeDrag {
     from: egui::Pos2,
 }
 
-impl Default for SignalNodesApp {
+impl Default for VSignalNodesApp {
     fn default() -> Self {
         let plugins = builtin_plugins();
         let palette = palette(&plugins);
@@ -109,9 +109,9 @@ impl Default for SignalNodesApp {
 /// placeholder. They are part of the build, so failing to load one is a bug.
 fn builtin_plugins() -> PluginHost {
     let mut host = PluginHost::new();
-    host.load(&signal_nodes_plugin_std::StdPlugin)
+    host.load(&v_signal_nodes_plugin_std::StdPlugin)
         .expect("the std plugin loads");
-    host.load(&signal_nodes_plugin_stub::StubPlugin)
+    host.load(&v_signal_nodes_plugin_stub::StubPlugin)
         .expect("the stub plugin loads");
     host
 }
@@ -119,7 +119,7 @@ fn builtin_plugins() -> PluginHost {
 /// Every node type of `plugins`, in palette order: generators, then processors,
 /// then outputs (the order a signal flows), by type id within each group.
 fn palette(plugins: &PluginHost) -> Vec<NodeKind> {
-    use signal_nodes_core::NodeKind as Role;
+    use v_signal_nodes_core::NodeKind as Role;
     let mut kinds: Vec<_> = plugins.specs().cloned().map(NodeKind::new).collect();
     // `specs` is already sorted by type id and the sort is stable.
     kinds.sort_by_key(|kind| match kind.spec().kind {
@@ -130,7 +130,7 @@ fn palette(plugins: &PluginHost) -> Vec<NodeKind> {
     kinds
 }
 
-impl SignalNodesApp {
+impl VSignalNodesApp {
     /// Creates the editor and installs its theme once for the app's lifetime.
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         ui::install_theme(&creation_context.egui_ctx);
@@ -343,7 +343,7 @@ impl SignalNodesApp {
     }
 }
 
-impl eframe::App for SignalNodesApp {
+impl eframe::App for VSignalNodesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui::render(self, ui);
     }
@@ -352,11 +352,11 @@ impl eframe::App for SignalNodesApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_nodes_plugin_std::{GAIN, MIXER, SINK, SOURCE};
-    use signal_nodes_plugin_stub::STUB_NODE;
+    use v_signal_nodes_plugin_std::{GAIN, MIXER, SINK, SOURCE};
+    use v_signal_nodes_plugin_stub::STUB_NODE;
 
     /// The palette entry for node type `type_id`.
-    fn kind(app: &SignalNodesApp, type_id: &str) -> NodeKind {
+    fn kind(app: &VSignalNodesApp, type_id: &str) -> NodeKind {
         app.palette
             .iter()
             .find(|kind| kind.spec().type_id == type_id)
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn connect_replaces_existing_source() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
 
         assert!(app.connect(output(0), input(2, 0)));
         assert!(app.connect(output(1), input(2, 0)));
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn connect_refuses_cycles() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
 
         assert!(!app.connect(output(0), input(0, 0)));
         assert!(app.connection_refused);
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn disconnect_input_removes_only_that_input() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         app.connect(output(0), input(2, 0));
         app.connect(output(1), input(2, 1));
         app.connection_refused = true;
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn disconnect_output_removes_every_connection_from_it() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         app.connect(output(0), input(1, 0));
         app.connect(output(0), input(2, 0));
         app.connect(output(1), input(2, 1));
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn remove_node_cleans_up_and_frees_id() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..3 {
             app.add_node_at(kind(&app, GAIN), egui::Pos2::ZERO);
         }
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn nodes_added_at_the_same_spot_do_not_overlap() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..5 {
             app.add_node_at(kind(&app, MIXER), egui::pos2(100.0, 100.0));
         }
@@ -479,14 +479,14 @@ mod tests {
     }
 
     /// Two gain nodes side by side, `NODE_GAP`-ish apart: ids 0 (left) and 1.
-    fn two_nodes() -> SignalNodesApp {
-        let mut app = SignalNodesApp::default();
+    fn two_nodes() -> VSignalNodesApp {
+        let mut app = VSignalNodesApp::default();
         app.add_node_at(kind(&app, GAIN), egui::pos2(0.0, 0.0));
         app.add_node_at(kind(&app, GAIN), egui::pos2(300.0, 0.0));
         app
     }
 
-    fn pos(app: &SignalNodesApp, node_id: usize) -> egui::Pos2 {
+    fn pos(app: &VSignalNodesApp, node_id: usize) -> egui::Pos2 {
         app.nodes
             .iter()
             .find(|node| node.id == node_id)
@@ -528,7 +528,7 @@ mod tests {
     fn a_drop_into_a_crowd_stays_and_pushes_the_others_aside() {
         // A column of three gain nodes, a little more than the gap apart, and a
         // fourth node dragged right onto the middle one: no free spot nearby.
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..4 {
             app.add_node_at(kind(&app, GAIN), egui::pos2(1000.0, 1000.0));
         }
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn palette_lists_every_plugin_node_in_signal_order() {
-        let app = SignalNodesApp::default();
+        let app = VSignalNodesApp::default();
         let type_ids: Vec<_> = app
             .palette
             .iter()
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn nodes_are_built_by_core_and_placed() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         let stub = kind(&app, STUB_NODE);
 
         app.add_node_at(stub.clone(), egui::Pos2::ZERO);
@@ -653,11 +653,11 @@ mod tests {
 
     #[test]
     fn unknown_plugin_types_are_not_added() {
-        let mut app = SignalNodesApp::default();
-        let unknown = signal_nodes_core::NodeSpec::new(
+        let mut app = VSignalNodesApp::default();
+        let unknown = v_signal_nodes_core::NodeSpec::new(
             "test.unknown",
             "Unknown",
-            signal_nodes_core::NodeKind::Generator,
+            v_signal_nodes_core::NodeKind::Generator,
         );
 
         app.add_node_at(NodeKind::new(unknown), egui::Pos2::ZERO);
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn raise_node_moves_it_to_the_top() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..3 {
             app.add_node_at(kind(&app, GAIN), egui::Pos2::ZERO);
         }

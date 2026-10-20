@@ -1,7 +1,7 @@
 //! Editor-side node model and geometry.
 //!
 //! This is what the canvas draws and edits. Every node type comes from a plugin:
-//! a [`NodeKind`] wraps the plugin's `signal-nodes-core` [`NodeSpec`], and a
+//! a [`NodeKind`] wraps the plugin's `v-signal-nodes-core` [`NodeSpec`], and a
 //! placed node is first built as a `core::Node` by the plugin host, then turned
 //! into a [`NodeConfig`] with [`NodeConfig::from_node`].
 //!
@@ -36,7 +36,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use signal_nodes_core::{Node, NodeSocket, NodeSpec, ParamKind, ParamSpec};
+use v_signal_nodes_core::{Node, NodeSocket, NodeSpec, ParamKind, ParamSpec};
 
 use super::super::localization::{Language, Text};
 
@@ -89,7 +89,7 @@ impl SocketKind {
 
 /// Address of one socket: node, side and row.
 ///
-/// Used as both key and value of `SignalNodesApp::connections`.
+/// Used as both key and value of `VSignalNodesApp::connections`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(in crate::editor) struct SocketRef {
     /// ID of the node ([`NodeWidget::id`]).
@@ -112,8 +112,8 @@ pub(in crate::editor) enum ParamValue {
 
 impl ParamValue {
     /// How `value` of the parameter `spec` is shown.
-    fn from_core(spec: &ParamSpec, value: signal_nodes_core::ParamValue) -> Self {
-        use signal_nodes_core::ParamValue as Core;
+    fn from_core(spec: &ParamSpec, value: v_signal_nodes_core::ParamValue) -> Self {
+        use v_signal_nodes_core::ParamValue as Core;
         match (&spec.kind, value) {
             (ParamKind::Choice { options, .. }, Core::Choice(index)) => {
                 Self::Option(options.get(index).cloned().unwrap_or_default())
@@ -170,7 +170,7 @@ impl NodeConfig {
         kind: NodeKind,
         inputs: &[NodeSocket],
         outputs: &[NodeSocket],
-        params: &[signal_nodes_core::ParamValue],
+        params: &[v_signal_nodes_core::ParamValue],
     ) -> Self {
         let labels =
             |sockets: &[NodeSocket]| sockets.iter().map(|socket| socket.name.clone()).collect();
@@ -234,7 +234,7 @@ impl NodeConfig {
 /// A node placed on the canvas.
 #[derive(Clone, Debug)]
 pub(in crate::editor) struct NodeWidget {
-    /// Slot from `SignalNodesApp::free_node_ids`; unique among live nodes and
+    /// Slot from `VSignalNodesApp::free_node_ids`; unique among live nodes and
     /// reused after the node is deleted. Shown in the node title.
     pub(in crate::editor) id: usize,
     pub(super) config: NodeConfig,
@@ -290,12 +290,12 @@ impl NodeWidget {
     }
 }
 
-/// The kind of standard node `type_id` (e.g. `signal_nodes_plugin_std::GAIN`),
+/// The kind of standard node `type_id` (e.g. `v_signal_nodes_plugin_std::GAIN`),
 /// for tests that need real nodes without an app.
 #[cfg(test)]
 pub(in crate::editor) fn std_kind(type_id: &str) -> NodeKind {
-    let mut host = signal_nodes_plugin_host::PluginHost::new();
-    host.load(&signal_nodes_plugin_std::StdPlugin).unwrap();
+    let mut host = v_signal_nodes_plugin_host::PluginHost::new();
+    host.load(&v_signal_nodes_plugin_std::StdPlugin).unwrap();
     let spec = host.specs().find(|spec| spec.type_id == type_id).unwrap();
     NodeKind::new(spec.clone())
 }
@@ -303,7 +303,7 @@ pub(in crate::editor) fn std_kind(type_id: &str) -> NodeKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_nodes_plugin_std::{GAIN, MIXER};
+    use v_signal_nodes_plugin_std::{GAIN, MIXER};
 
     #[test]
     fn node_geometry_expands_for_custom_sockets_and_content() {
@@ -344,15 +344,19 @@ mod tests {
 
     #[test]
     fn labels_are_translated_by_the_spec() {
-        let spec = NodeSpec::new("test.gain", "Gain", signal_nodes_core::NodeKind::Processor)
-            .input(NodeSocket::audio_in("in"))
-            .output(NodeSocket::audio_out("out"))
-            .param(ParamSpec::choice("mode", "Mode", ["soft", "hard"], 1))
-            .param(ParamSpec::toggle("on", "Enabled", true))
-            .translate(
-                "ru",
-                [("Gain", "Усиление"), ("Mode", "Режим"), ("hard", "жёсткий")],
-            );
+        let spec = NodeSpec::new(
+            "test.gain",
+            "Gain",
+            v_signal_nodes_core::NodeKind::Processor,
+        )
+        .input(NodeSocket::audio_in("in"))
+        .output(NodeSocket::audio_out("out"))
+        .param(ParamSpec::choice("mode", "Mode", ["soft", "hard"], 1))
+        .param(ParamSpec::toggle("on", "Enabled", true))
+        .translate(
+            "ru",
+            [("Gain", "Усиление"), ("Mode", "Режим"), ("hard", "жёсткий")],
+        );
         let kind = NodeKind::new(spec);
         let config = NodeConfig::for_kind(&kind);
 
