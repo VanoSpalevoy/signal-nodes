@@ -1,10 +1,13 @@
 //! UI translations.
 //!
-//! Every user-visible string is a [`Text`] key resolved with [`Language::text`] at
-//! paint time, so switching the language takes effect on the next frame everywhere,
-//! including nodes that already exist. To add a string: add a `Text` variant and one
-//! arm per language in [`Language::text`]; the exhaustive `match` makes a missing
+//! Every user-visible editor string is a [`Text`] key resolved with
+//! [`Language::text`] at paint time, so switching the language takes effect on the
+//! next frame everywhere. To add a string: add a `Text` variant and one arm per
+//! language in [`Language::text`]; the exhaustive `match` makes a missing
 //! translation a compile error.
+//!
+//! Node text is not here: it comes from the plugins, which ship their own
+//! translations in the node specs, looked up by [`Language::code`].
 
 /// A UI language.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,10 +26,6 @@ pub(super) enum Text {
     Debug,
     Ready,
     SelectedSourceSocket,
-    Source,
-    Gain,
-    Mixer,
-    Sink,
     Input,
     Output,
     DeleteNode,
@@ -34,22 +33,9 @@ pub(super) enum Text {
     ConnectionCreatesCycle,
     SnapToGrid,
     Scale,
-    // Socket labels
-    Audio,
-    AudioIn,
-    AudioOut,
-    Left,
-    Right,
-    Side,
-    Mixed,
-    // Node parameters
-    Signal,
-    Sine,
-    Mode,
-    Stereo,
-    Pan,
-    Center,
-    Channels,
+    // Toggle parameter values, the same for every plugin.
+    On,
+    Off,
 }
 
 impl Language {
@@ -64,6 +50,14 @@ impl Language {
         }
     }
 
+    /// Language code used by plugin translations (`NodeSpec::label`), e.g. `"ru"`.
+    pub(super) fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Russian => "ru",
+        }
+    }
+
     /// The string for `key` in this language.
     pub(super) fn text(self, key: Text) -> &'static str {
         match (self, key) {
@@ -74,10 +68,6 @@ impl Language {
             (Self::English, Text::Debug) => "Debug",
             (Self::English, Text::Ready) => "Ready",
             (Self::English, Text::SelectedSourceSocket) => "Selected source socket: node",
-            (Self::English, Text::Source) => "Source",
-            (Self::English, Text::Gain) => "Gain",
-            (Self::English, Text::Mixer) => "Mixer",
-            (Self::English, Text::Sink) => "Sink",
             (Self::English, Text::Input) => "Input",
             (Self::English, Text::Output) => "Output",
             (Self::English, Text::DeleteNode) => "Delete node",
@@ -87,20 +77,8 @@ impl Language {
             }
             (Self::English, Text::SnapToGrid) => "Snap to grid",
             (Self::English, Text::Scale) => "Scale",
-            (Self::English, Text::Audio) => "Audio",
-            (Self::English, Text::AudioIn) => "Audio in",
-            (Self::English, Text::AudioOut) => "Audio out",
-            (Self::English, Text::Left) => "Left",
-            (Self::English, Text::Right) => "Right",
-            (Self::English, Text::Side) => "Side",
-            (Self::English, Text::Mixed) => "Mixed",
-            (Self::English, Text::Signal) => "Signal",
-            (Self::English, Text::Sine) => "sine",
-            (Self::English, Text::Mode) => "Mode",
-            (Self::English, Text::Stereo) => "stereo",
-            (Self::English, Text::Pan) => "Pan",
-            (Self::English, Text::Center) => "center",
-            (Self::English, Text::Channels) => "Channels",
+            (Self::English, Text::On) => "on",
+            (Self::English, Text::Off) => "off",
             (Self::Russian, Text::Language) => "Язык",
             (Self::Russian, Text::Tools) => "Инструменты",
             (Self::Russian, Text::Settings) => "Настройки",
@@ -108,10 +86,6 @@ impl Language {
             (Self::Russian, Text::Debug) => "Отладка",
             (Self::Russian, Text::Ready) => "Готово",
             (Self::Russian, Text::SelectedSourceSocket) => "Выбран выходной сокет ноды",
-            (Self::Russian, Text::Source) => "Источник",
-            (Self::Russian, Text::Gain) => "Усиление",
-            (Self::Russian, Text::Mixer) => "Микшер",
-            (Self::Russian, Text::Sink) => "Приёмник",
             (Self::Russian, Text::Input) => "Вход",
             (Self::Russian, Text::Output) => "Выход",
             (Self::Russian, Text::DeleteNode) => "Удалить ноду",
@@ -121,20 +95,8 @@ impl Language {
             }
             (Self::Russian, Text::SnapToGrid) => "Привязать к сетке",
             (Self::Russian, Text::Scale) => "Масштаб",
-            (Self::Russian, Text::Audio) => "Аудио",
-            (Self::Russian, Text::AudioIn) => "Аудио вход",
-            (Self::Russian, Text::AudioOut) => "Аудио выход",
-            (Self::Russian, Text::Left) => "Левый",
-            (Self::Russian, Text::Right) => "Правый",
-            (Self::Russian, Text::Side) => "Боковой",
-            (Self::Russian, Text::Mixed) => "Микс",
-            (Self::Russian, Text::Signal) => "Сигнал",
-            (Self::Russian, Text::Sine) => "синус",
-            (Self::Russian, Text::Mode) => "Режим",
-            (Self::Russian, Text::Stereo) => "стерео",
-            (Self::Russian, Text::Pan) => "Панорама",
-            (Self::Russian, Text::Center) => "центр",
-            (Self::Russian, Text::Channels) => "Каналы",
+            (Self::Russian, Text::On) => "вкл",
+            (Self::Russian, Text::Off) => "выкл",
         }
     }
 }

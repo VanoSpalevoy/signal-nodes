@@ -238,7 +238,7 @@ fn content_size(nodes: &[NodeWidget], scale: f32, viewport: egui::Vec2) -> egui:
 ///
 /// Moved to the nearest free spot if that would overlap a node, exactly as
 /// `add_node_at` will place it, so the preview shows the real landing spot.
-fn drop_rect(kind: NodeKind, pointer: egui::Pos2, view: View, nodes: &[NodeWidget]) -> egui::Rect {
+fn drop_rect(kind: &NodeKind, pointer: egui::Pos2, view: View, nodes: &[NodeWidget]) -> egui::Rect {
     let config = NodeConfig::for_kind(kind);
     let size = config.size();
     let pos = place_new_node(nodes, &config, view.to_canvas(pointer) - size * 0.5);

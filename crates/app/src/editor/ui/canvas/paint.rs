@@ -79,7 +79,7 @@ fn paint_connections(app: &SignalNodesApp, painter: &egui::Painter, view: View) 
         app.nodes
             .iter()
             .find(|node| node.id == node_id)
-            .map_or(ACCENT, |node| node_color(node.config.kind))
+            .map_or(ACCENT, |node| node_color(&node.config.kind))
     };
     let width = view.len(CONNECTION_WIDTH);
     for connection in app.routes.routes() {
@@ -278,7 +278,7 @@ fn paint_nodes(app: &SignalNodesApp, painter: &egui::Painter, view: View, hovere
     let language = app.language;
     let font = |size: f32| egui::FontId::proportional(view.len(size));
     for node in &app.nodes {
-        let color = node_color(node.config.kind);
+        let color = node_color(&node.config.kind);
         let rect = view.rect(node.rect());
         let rounding = view.len(NODE_ROUNDING);
 
@@ -326,7 +326,7 @@ fn paint_nodes(app: &SignalNodesApp, painter: &egui::Painter, view: View, hovere
             painter.text(
                 view.pos(node.param_pos(index)),
                 egui::Align2::CENTER_CENTER,
-                param.label(language),
+                node.config.param_label(param, language),
                 font(12.0),
                 TEXT_DIM,
             );
@@ -377,7 +377,7 @@ fn paint_sockets(
     view: View,
     hovered: &Hovered,
 ) {
-    let color = node_color(node.config.kind);
+    let color = node_color(&node.config.kind);
     for (side, sockets) in [
         (SocketKind::Input, &node.config.inputs),
         (SocketKind::Output, &node.config.outputs),
@@ -415,7 +415,7 @@ fn paint_sockets(
             painter.text(
                 pos + egui::vec2(direction * view.len(SOCKET_LABEL_GAP), 0.0),
                 align,
-                app.language.text(*label),
+                node.config.text(label, app.language),
                 egui::FontId::proportional(view.len(11.0)),
                 TEXT_DIM,
             );
@@ -434,8 +434,8 @@ fn paint_palette_preview(
     let (Some(kind), Some(pos)) = (egui::DragAndDrop::payload::<NodeKind>(ctx), pointer) else {
         return;
     };
-    let color = node_color(*kind);
-    let preview_rect = view.rect(drop_rect(*kind, pos, view, &app.nodes));
+    let color = node_color(&kind);
+    let preview_rect = view.rect(drop_rect(&kind, pos, view, &app.nodes));
     let rounding = view.len(NODE_ROUNDING);
     painter.rect_filled(preview_rect, rounding, color.gamma_multiply(0.08));
     painter.rect_stroke(

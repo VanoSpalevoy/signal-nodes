@@ -7,6 +7,7 @@
 //! can be unit-tested without egui.
 
 use eframe::egui;
+use signal_nodes_plugin_host::PluginHost;
 use std::collections::{HashMap, HashSet};
 
 mod localization;
@@ -63,6 +64,11 @@ pub struct SignalNodesApp {
     /// Connection routes, derived from `nodes` and `connections` and brought up to
     /// date by the canvas every frame. Never saved.
     routes: RouteCache,
+    /// Loaded plugins, the source of every node type; nodes are built here (as
+    /// `core::Node`s) before they become widgets.
+    plugins: PluginHost,
+    /// Every node type of `plugins`, in palette order (see [`palette`]).
+    palette: Vec<NodeKind>,
 }
 
 /// A node drag in progress, from [`begin_drag`](SignalNodesApp::begin_drag) to
@@ -77,6 +83,8 @@ struct NodeDrag {
 
 impl Default for SignalNodesApp {
     fn default() -> Self {
+        let plugins = builtin_plugins();
+        let palette = palette(&plugins);
         Self {
             nodes: Vec::new(),
             connections: HashMap::new(),
@@ -89,8 +97,35 @@ impl Default for SignalNodesApp {
             scale: 1.0,
             drag: None,
             routes: RouteCache::default(),
+            plugins,
+            palette,
         }
     }
+}
+
+/// A plugin host with the plugins linked into the editor: `std` and the `stub`
+/// placeholder. They are part of the build, so failing to load one is a bug.
+fn builtin_plugins() -> PluginHost {
+    let mut host = PluginHost::new();
+    host.load(&signal_nodes_plugin_std::StdPlugin)
+        .expect("the std plugin loads");
+    host.load(&signal_nodes_plugin_stub::StubPlugin)
+        .expect("the stub plugin loads");
+    host
+}
+
+/// Every node type of `plugins`, in palette order: generators, then processors,
+/// then outputs (the order a signal flows), by type id within each group.
+fn palette(plugins: &PluginHost) -> Vec<NodeKind> {
+    use signal_nodes_core::NodeKind as Role;
+    let mut kinds: Vec<_> = plugins.specs().cloned().map(NodeKind::new).collect();
+    // `specs` is already sorted by type id and the sort is stable.
+    kinds.sort_by_key(|kind| match kind.spec().kind {
+        Role::Generator => 0,
+        Role::Processor => 1,
+        Role::Output => 2,
+    });
+    kinds
 }
 
 impl SignalNodesApp {
@@ -103,6 +138,11 @@ impl SignalNodesApp {
     /// Adds a node of `kind` with its top-left corner as close to `pos` (canvas
     /// coordinates) as possible without overlapping other nodes.
     ///
+    /// The node is built by `plugins` first (a `core::Node` with its processor)
+    /// and its widget made from that node. The processor is dropped: there is no
+    /// runtime to run it yet. If the host can't build the node (an unknown type
+    /// id), nothing is added.
+    ///
     /// When all [`MAX_NODE_COUNT`] IDs are in use, nothing is added and
     /// `node_limit_reached` is set instead.
     fn add_node_at(&mut self, kind: NodeKind, pos: egui::Pos2) {
@@ -110,8 +150,14 @@ impl SignalNodesApp {
             self.node_limit_reached = true;
             return;
         };
+        let config = match self.plugins.build_node(&kind.spec().type_id, id) {
+            Ok(built) => NodeConfig::from_node(kind, &built.node),
+            Err(_) => {
+                self.free_node_ids.push(id);
+                return;
+            }
+        };
         self.node_limit_reached = false;
-        let config = NodeConfig::for_kind(kind);
         let pos = ui::place_new_node(&self.nodes, &config, pos);
         self.nodes.push(NodeWidget::new(id, config, pos));
     }
@@ -284,6 +330,17 @@ impl eframe::App for SignalNodesApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use signal_nodes_plugin_std::{GAIN, MIXER, SINK, SOURCE};
+    use signal_nodes_plugin_stub::STUB_NODE;
+
+    /// The palette entry for node type `type_id`.
+    fn kind(app: &SignalNodesApp, type_id: &str) -> NodeKind {
+        app.palette
+            .iter()
+            .find(|kind| kind.spec().type_id == type_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{type_id} is not in the palette"))
+    }
 
     fn output(node_id: usize) -> SocketRef {
         SocketRef {
@@ -363,7 +420,7 @@ mod tests {
     fn remove_node_cleans_up_and_frees_id() {
         let mut app = SignalNodesApp::default();
         for _ in 0..3 {
-            app.add_node_at(NodeKind::Gain, egui::Pos2::ZERO);
+            app.add_node_at(kind(&app, GAIN), egui::Pos2::ZERO);
         }
         let ids: Vec<_> = app.nodes.iter().map(|node| node.id).collect();
         app.connect(output(ids[0]), input(ids[1], 0));
@@ -376,7 +433,7 @@ mod tests {
         assert!(app.connections.is_empty());
         assert_eq!(app.pending_source, None);
         // The freed ID is reused first.
-        app.add_node_at(NodeKind::Sink, egui::Pos2::ZERO);
+        app.add_node_at(kind(&app, SINK), egui::Pos2::ZERO);
         assert_eq!(app.nodes.last().unwrap().id, ids[1]);
     }
 
@@ -384,7 +441,7 @@ mod tests {
     fn nodes_added_at_the_same_spot_do_not_overlap() {
         let mut app = SignalNodesApp::default();
         for _ in 0..5 {
-            app.add_node_at(NodeKind::Mixer, egui::pos2(100.0, 100.0));
+            app.add_node_at(kind(&app, MIXER), egui::pos2(100.0, 100.0));
         }
 
         for (i, a) in app.nodes.iter().enumerate() {
@@ -402,8 +459,8 @@ mod tests {
     /// Two gain nodes side by side, `NODE_GAP`-ish apart: ids 0 (left) and 1.
     fn two_nodes() -> SignalNodesApp {
         let mut app = SignalNodesApp::default();
-        app.add_node_at(NodeKind::Gain, egui::pos2(0.0, 0.0));
-        app.add_node_at(NodeKind::Gain, egui::pos2(300.0, 0.0));
+        app.add_node_at(kind(&app, GAIN), egui::pos2(0.0, 0.0));
+        app.add_node_at(kind(&app, GAIN), egui::pos2(300.0, 0.0));
         app
     }
 
@@ -477,10 +534,51 @@ mod tests {
     }
 
     #[test]
+    fn palette_lists_every_plugin_node_in_signal_order() {
+        let app = SignalNodesApp::default();
+        let type_ids: Vec<_> = app
+            .palette
+            .iter()
+            .map(|kind| kind.spec().type_id.as_str())
+            .collect();
+
+        assert_eq!(type_ids, [SOURCE, GAIN, MIXER, STUB_NODE, SINK]);
+    }
+
+    #[test]
+    fn nodes_are_built_by_core_and_placed() {
+        let mut app = SignalNodesApp::default();
+        let stub = kind(&app, STUB_NODE);
+
+        app.add_node_at(stub.clone(), egui::Pos2::ZERO);
+
+        assert_eq!(app.nodes.len(), 1);
+        assert_eq!(app.nodes[0].id, 0);
+        // The widget built from the core node has the spec-based preview's size.
+        let preview = NodeWidget::new(0, NodeConfig::for_kind(&stub), egui::Pos2::ZERO);
+        assert_eq!(app.nodes[0].rect().size(), preview.rect().size());
+    }
+
+    #[test]
+    fn unknown_plugin_types_are_not_added() {
+        let mut app = SignalNodesApp::default();
+        let unknown = signal_nodes_core::NodeSpec::new(
+            "test.unknown",
+            "Unknown",
+            signal_nodes_core::NodeKind::Generator,
+        );
+
+        app.add_node_at(NodeKind::new(unknown), egui::Pos2::ZERO);
+
+        assert!(app.nodes.is_empty());
+        assert_eq!(app.free_node_ids.len(), MAX_NODE_COUNT);
+    }
+
+    #[test]
     fn raise_node_moves_it_to_the_top() {
         let mut app = SignalNodesApp::default();
         for _ in 0..3 {
-            app.add_node_at(NodeKind::Gain, egui::Pos2::ZERO);
+            app.add_node_at(kind(&app, GAIN), egui::Pos2::ZERO);
         }
         let bottom = app.nodes[0].id;
 

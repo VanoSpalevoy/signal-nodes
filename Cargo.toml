@@ -6,6 +6,7 @@ members = [
     "crates/plugin-api",
     "crates/plugin-host",
     "crates/plugin-std",
+    "crates/plugin-stub",
     "crates/app",
 ]
 

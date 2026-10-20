@@ -20,7 +20,7 @@ pub(super) fn add_requested_node(app: &mut SignalNodesApp, view: View, viewport:
     let Some(kind) = app.requested_node.take() else {
         return;
     };
-    let size = NodeConfig::for_kind(kind).size();
+    let size = NodeConfig::for_kind(&kind).size();
     app.add_node_at(kind, view.to_canvas(viewport.center()) - size * 0.5);
 }
 
@@ -36,7 +36,8 @@ pub(super) fn finish_palette_drop(
         && ui.input(|input| input.pointer.any_released())
         && let Some(kind) = egui::DragAndDrop::take_payload::<NodeKind>(ui.ctx())
     {
-        app.add_node_at(*kind, drop_rect(*kind, pos, view, &app.nodes).min);
+        let pos = drop_rect(&kind, pos, view, &app.nodes).min;
+        app.add_node_at((*kind).clone(), pos);
     }
 }
 

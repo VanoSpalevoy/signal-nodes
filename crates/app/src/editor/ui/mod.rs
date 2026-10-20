@@ -36,7 +36,8 @@
 //!   (also egui's "weak" text); [`ACCENT`] marks anything interactive or selected.
 //! - Panels share [`panel_frame`]: no outlines, only egui's thin separator lines.
 //!   The theme is installed once at startup by [`install_theme`], not per frame.
-//! - All visible text goes through [`Language::text`].
+//! - All visible editor text goes through [`Language::text`]; node text comes
+//!   from the plugin specs and is translated by them (see [`node`]).
 
 mod canvas;
 mod debug;
@@ -51,6 +52,8 @@ use eframe::egui;
 use super::SignalNodesApp;
 pub(super) use super::localization::Language;
 pub(super) use canvas::RouteCache;
+#[cfg(test)]
+pub(super) use node::std_kind;
 pub(super) use node::{NodeConfig, NodeKind, NodeWidget, SocketKind, SocketRef};
 pub(super) use placement::{free_pos, place_new_node, slide};
 
@@ -168,11 +171,14 @@ fn visuals() -> egui::Visuals {
 
 /// Accent color of a node kind: the palette button fill, the node outline, header
 /// tint and socket dots, and the drop preview, so a kind is recognizable everywhere.
-fn node_color(kind: NodeKind) -> egui::Color32 {
-    match kind {
-        NodeKind::Source => egui::Color32::from_rgb(82, 196, 126),
-        NodeKind::Gain => egui::Color32::from_rgb(152, 124, 250),
-        NodeKind::Mixer => egui::Color32::from_rgb(64, 186, 210),
-        NodeKind::Sink => egui::Color32::from_rgb(236, 128, 92),
+///
+/// Decided by the node's role (`core::NodeKind` of its spec): generators green,
+/// processors violet, outputs orange.
+fn node_color(kind: &NodeKind) -> egui::Color32 {
+    use signal_nodes_core::NodeKind as Role;
+    match kind.spec().kind {
+        Role::Generator => egui::Color32::from_rgb(82, 196, 126),
+        Role::Processor => egui::Color32::from_rgb(152, 124, 250),
+        Role::Output => egui::Color32::from_rgb(236, 128, 92),
     }
 }

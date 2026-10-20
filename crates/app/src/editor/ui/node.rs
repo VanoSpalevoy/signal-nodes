@@ -1,7 +1,15 @@
 //! Editor-side node model and geometry.
 //!
-//! This is what the canvas draws and edits. It is separate from the processing
-//! model in `signal-nodes-core`, which the editor doesn't use yet.
+//! This is what the canvas draws and edits. Every node type comes from a plugin:
+//! a [`NodeKind`] wraps the plugin's `signal-nodes-core` [`NodeSpec`], and a
+//! placed node is first built as a `core::Node` by the plugin host, then turned
+//! into a [`NodeConfig`] with [`NodeConfig::from_node`].
+//!
+//! Node text (title, socket and parameter names, choice options) is the spec's
+//! English labels, kept as is and translated by the spec itself at paint time
+//! ([`NodeKind::label`], [`NodeConfig::text`]), so any plugin can ship its own
+//! translations and existing nodes follow language changes. The editor only adds
+//! the "on"/"off" of toggles.
 //!
 //! All positions here are **canvas coordinates**: `(0, 0)` is the top-left of the
 //! scrollable canvas content, independent of scrolling and window layout. The
@@ -25,7 +33,10 @@
 //! parameter text never overlaps socket labels. The node is tall enough for all
 //! rows, but at least [`MIN_NODE_HEIGHT`].
 
+use std::sync::Arc;
+
 use eframe::egui;
+use signal_nodes_core::{Node, NodeSocket, NodeSpec, ParamKind, ParamSpec};
 
 use super::super::localization::{Language, Text};
 
@@ -38,27 +49,24 @@ const ROW_HEIGHT: f32 = 22.0;
 /// Height of the header above the first row.
 const CONTENT_TOP: f32 = 38.0;
 
-/// Type of a node; decides its sockets, parameters and color.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::editor) enum NodeKind {
-    Source,
-    Gain,
-    Mixer,
-    Sink,
-}
+/// Type of a node: the spec of a node type from a loaded plugin. Decides its
+/// sockets, parameters and color. Cheap to clone (the spec is shared).
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::editor) struct NodeKind(Arc<NodeSpec>);
 
 impl NodeKind {
-    /// All kinds, in palette order.
-    pub(super) const ALL: [Self; 4] = [Self::Source, Self::Gain, Self::Mixer, Self::Sink];
+    pub(in crate::editor) fn new(spec: NodeSpec) -> Self {
+        Self(Arc::new(spec))
+    }
 
-    /// Display name, used for the palette button and the node title.
-    pub(super) fn label(self, language: Language) -> &'static str {
-        match self {
-            Self::Source => language.text(Text::Source),
-            Self::Gain => language.text(Text::Gain),
-            Self::Mixer => language.text(Text::Mixer),
-            Self::Sink => language.text(Text::Sink),
-        }
+    /// The plugin's description of this node type.
+    pub(in crate::editor) fn spec(&self) -> &NodeSpec {
+        &self.0
+    }
+
+    /// Display name in `language`, used for the palette button and the node title.
+    pub(super) fn label(&self, language: Language) -> &str {
+        self.0.label(language.code(), &self.0.name)
     }
 }
 
@@ -91,91 +99,116 @@ pub(in crate::editor) struct SocketRef {
     pub(in crate::editor) index: usize,
 }
 
-/// Value of a node parameter.
-#[derive(Clone, Copy, Debug)]
+/// Value of a node parameter, as shown.
+#[derive(Clone, Debug)]
 pub(in crate::editor) enum ParamValue {
-    /// A word that is translated with the UI, such as "stereo".
-    Text(Text),
+    /// A choice option: an English spec label, translated by the spec.
+    Option(String),
     /// A number, shown with one decimal place.
     Number(f32),
+    /// A toggle, shown as "on"/"off" in the UI language.
+    Toggle(bool),
 }
 
-/// A named node parameter, shown as `Name: value` in its own row below the sockets.
-/// Display only for now: parameters can't be edited yet.
-#[derive(Clone, Copy, Debug)]
-pub(in crate::editor) struct NodeParam {
-    name: Text,
-    value: ParamValue,
-}
-
-impl NodeParam {
-    /// `Name: value` in `language`, for example "Gain: 1.0" or "Режим: стерео".
-    pub(super) fn label(self, language: Language) -> String {
-        let name = language.text(self.name);
-        match self.value {
-            ParamValue::Text(value) => format!("{name}: {}", language.text(value)),
-            ParamValue::Number(value) => format!("{name}: {value:.1}"),
+impl ParamValue {
+    /// How `value` of the parameter `spec` is shown.
+    fn from_core(spec: &ParamSpec, value: signal_nodes_core::ParamValue) -> Self {
+        use signal_nodes_core::ParamValue as Core;
+        match (&spec.kind, value) {
+            (ParamKind::Choice { options, .. }, Core::Choice(index)) => {
+                Self::Option(options.get(index).cloned().unwrap_or_default())
+            }
+            (_, Core::Choice(index)) => Self::Number(index as f32),
+            (_, Core::Number(value)) => Self::Number(value),
+            (_, Core::Toggle(on)) => Self::Toggle(on),
         }
     }
 }
 
+/// A named node parameter, shown as `Name: value` in its own row below the sockets.
+/// Display only for now: parameters can't be edited yet.
+#[derive(Clone, Debug)]
+pub(in crate::editor) struct NodeParam {
+    /// English name from the spec.
+    name: String,
+    value: ParamValue,
+}
+
 /// What a node contains: its kind, socket labels and parameters.
 ///
-/// Holds translation keys, not strings, so nodes follow language changes.
+/// Holds the spec's English labels, not translated strings, so nodes follow
+/// language changes.
 #[derive(Clone, Debug)]
 pub(in crate::editor) struct NodeConfig {
     pub(super) kind: NodeKind,
     /// Input socket labels, top to bottom; the position is the socket index.
-    pub(super) inputs: Vec<Text>,
+    pub(super) inputs: Vec<String>,
     /// Output socket labels, top to bottom; the position is the socket index.
-    pub(super) outputs: Vec<Text>,
+    pub(super) outputs: Vec<String>,
     /// Parameters, top to bottom.
     pub(super) content: Vec<NodeParam>,
 }
 
 impl NodeConfig {
-    /// Default sockets and parameters for a new node of `kind`.
-    ///
-    /// | Kind   | Inputs              | Outputs   | Parameters                    |
-    /// |--------|---------------------|-----------|-------------------------------|
-    /// | Source | —                   | Audio     | Signal: sine                  |
-    /// | Gain   | Audio in            | Audio out | Gain: 1.0                     |
-    /// | Mixer  | Left, Right, Side   | Mixed     | Mode: stereo, Gain, Pan       |
-    /// | Sink   | Audio               | —         | Channels: stereo              |
-    pub(in crate::editor) fn for_kind(kind: NodeKind) -> Self {
-        let param = |name, value| NodeParam { name, value };
-        let (inputs, outputs, content) = match kind {
-            NodeKind::Source => (
-                vec![],
-                vec![Text::Audio],
-                vec![param(Text::Signal, ParamValue::Text(Text::Sine))],
-            ),
-            NodeKind::Gain => (
-                vec![Text::AudioIn],
-                vec![Text::AudioOut],
-                vec![param(Text::Gain, ParamValue::Number(1.0))],
-            ),
-            NodeKind::Mixer => (
-                vec![Text::Left, Text::Right, Text::Side],
-                vec![Text::Mixed],
-                vec![
-                    param(Text::Mode, ParamValue::Text(Text::Stereo)),
-                    param(Text::Gain, ParamValue::Number(1.0)),
-                    param(Text::Pan, ParamValue::Text(Text::Center)),
-                ],
-            ),
-            NodeKind::Sink => (
-                vec![Text::Audio],
-                vec![],
-                vec![param(Text::Channels, ParamValue::Text(Text::Stereo))],
-            ),
-        };
+    /// A new node of `kind` as its spec describes it, with every parameter at its
+    /// default. Placed nodes use [`from_node`](Self::from_node) instead; this is
+    /// for sizes and previews before the node exists.
+    pub(in crate::editor) fn for_kind(kind: &NodeKind) -> Self {
+        let spec = kind.spec();
+        let defaults: Vec<_> = spec.params.iter().map(ParamSpec::default_value).collect();
+        Self::from_parts(kind.clone(), &spec.inputs, &spec.outputs, &defaults)
+    }
 
+    /// The config of `node`, built by `core` from `kind`'s spec: its sockets and
+    /// current parameter values.
+    pub(in crate::editor) fn from_node(kind: NodeKind, node: &Node) -> Self {
+        debug_assert_eq!(kind.spec().type_id, node.type_id);
+        Self::from_parts(kind, &node.inputs, &node.outputs, &node.params)
+    }
+
+    fn from_parts(
+        kind: NodeKind,
+        inputs: &[NodeSocket],
+        outputs: &[NodeSocket],
+        params: &[signal_nodes_core::ParamValue],
+    ) -> Self {
+        let labels =
+            |sockets: &[NodeSocket]| sockets.iter().map(|socket| socket.name.clone()).collect();
+        let content = kind
+            .spec()
+            .params
+            .iter()
+            .zip(params)
+            .map(|(param, &value)| NodeParam {
+                name: param.name.clone(),
+                value: ParamValue::from_core(param, value),
+            })
+            .collect();
         Self {
-            kind,
-            inputs,
-            outputs,
+            inputs: labels(inputs),
+            outputs: labels(outputs),
             content,
+            kind,
+        }
+    }
+
+    /// The spec label `label` in `language`, translated by this node's spec
+    /// (English when it has no translation).
+    pub(super) fn text<'a>(&'a self, label: &'a str, language: Language) -> &'a str {
+        self.kind.spec().label(language.code(), label)
+    }
+
+    /// `Name: value` of `param` in `language`, for example "Gain: 1.0" or
+    /// "Режим: стерео".
+    pub(super) fn param_label(&self, param: &NodeParam, language: Language) -> String {
+        let name = self.text(&param.name, language);
+        match &param.value {
+            ParamValue::Option(option) => format!("{name}: {}", self.text(option, language)),
+            ParamValue::Number(value) => format!("{name}: {value:.1}"),
+            ParamValue::Toggle(on) => {
+                let state = if *on { Text::On } else { Text::Off };
+                format!("{name}: {}", language.text(state))
+            }
         }
     }
 
@@ -220,7 +253,7 @@ impl NodeWidget {
     }
 
     /// Socket labels on `side`, top to bottom.
-    pub(super) fn sockets(&self, side: SocketKind) -> &[Text] {
+    pub(super) fn sockets(&self, side: SocketKind) -> &[String] {
         match side {
             SocketKind::Input => &self.config.inputs,
             SocketKind::Output => &self.config.outputs,
@@ -257,13 +290,24 @@ impl NodeWidget {
     }
 }
 
+/// The kind of standard node `type_id` (e.g. `signal_nodes_plugin_std::GAIN`),
+/// for tests that need real nodes without an app.
+#[cfg(test)]
+pub(in crate::editor) fn std_kind(type_id: &str) -> NodeKind {
+    let mut host = signal_nodes_plugin_host::PluginHost::new();
+    host.load(&signal_nodes_plugin_std::StdPlugin).unwrap();
+    let spec = host.specs().find(|spec| spec.type_id == type_id).unwrap();
+    NodeKind::new(spec.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use signal_nodes_plugin_std::{GAIN, MIXER};
 
     #[test]
     fn node_geometry_expands_for_custom_sockets_and_content() {
-        let config = NodeConfig::for_kind(NodeKind::Mixer);
+        let config = NodeConfig::for_kind(&std_kind(MIXER));
         let node = NodeWidget::new(0, config, egui::Pos2::ZERO);
 
         assert!(node.rect().height() > MIN_NODE_HEIGHT);
@@ -277,7 +321,7 @@ mod tests {
 
     #[test]
     fn params_sit_below_sockets_inside_node() {
-        let node = NodeWidget::new(0, NodeConfig::for_kind(NodeKind::Mixer), egui::Pos2::ZERO);
+        let node = NodeWidget::new(0, NodeConfig::for_kind(&std_kind(MIXER)), egui::Pos2::ZERO);
         let last_socket = node.socket_pos(SocketKind::Input, 2);
         let first_param = node.param_pos(0);
         let last_param = node.param_pos(2);
@@ -288,10 +332,43 @@ mod tests {
 
     #[test]
     fn node_param_label_follows_language() {
-        let config = NodeConfig::for_kind(NodeKind::Gain);
-        let param = config.content[0];
+        let config = NodeConfig::for_kind(&std_kind(GAIN));
+        let param = &config.content[0];
 
-        assert_eq!(param.label(Language::English), "Gain: 1.0");
-        assert_eq!(param.label(Language::Russian), "Усиление: 1.0");
+        assert_eq!(config.param_label(param, Language::English), "Gain: 1.0");
+        assert_eq!(
+            config.param_label(param, Language::Russian),
+            "Усиление: 1.0"
+        );
+    }
+
+    #[test]
+    fn labels_are_translated_by_the_spec() {
+        let spec = NodeSpec::new("test.gain", "Gain", signal_nodes_core::NodeKind::Processor)
+            .input(NodeSocket::audio_in("in"))
+            .output(NodeSocket::audio_out("out"))
+            .param(ParamSpec::choice("mode", "Mode", ["soft", "hard"], 1))
+            .param(ParamSpec::toggle("on", "Enabled", true))
+            .translate(
+                "ru",
+                [("Gain", "Усиление"), ("Mode", "Режим"), ("hard", "жёсткий")],
+            );
+        let kind = NodeKind::new(spec);
+        let config = NodeConfig::for_kind(&kind);
+
+        assert_eq!(kind.label(Language::Russian), "Усиление");
+        assert_eq!(config.text(&config.inputs[0], Language::Russian), "in");
+        let labels = |language| {
+            config
+                .content
+                .iter()
+                .map(|param| config.param_label(param, language))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(Language::English), ["Mode: hard", "Enabled: on"]);
+        assert_eq!(
+            labels(Language::Russian),
+            ["Режим: жёсткий", "Enabled: вкл"]
+        );
     }
 }

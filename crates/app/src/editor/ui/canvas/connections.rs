@@ -197,10 +197,15 @@ fn hash_points(hasher: &mut DefaultHasher, points: &[egui::Pos2]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::{NodeConfig, NodeKind, SocketKind};
+    use crate::editor::{NodeConfig, SocketKind, ui::std_kind};
+    use signal_nodes_plugin_std::{GAIN, SINK, SOURCE};
 
-    fn node(id: usize, kind: NodeKind, x: f32, y: f32) -> NodeWidget {
-        NodeWidget::new(id, NodeConfig::for_kind(kind), egui::pos2(x, y))
+    fn node(id: usize, type_id: &str, x: f32, y: f32) -> NodeWidget {
+        NodeWidget::new(
+            id,
+            NodeConfig::for_kind(&std_kind(type_id)),
+            egui::pos2(x, y),
+        )
     }
 
     fn socket(node_id: usize, side: SocketKind, index: usize) -> SocketRef {
@@ -214,10 +219,10 @@ mod tests {
     /// Source 0 feeding sink 2 around gain 1 in the way, and source 3 feeding the gain.
     fn layout() -> (Vec<NodeWidget>, HashMap<SocketRef, SocketRef>) {
         let nodes = vec![
-            node(0, NodeKind::Source, 0.0, 0.0),
-            node(1, NodeKind::Gain, 250.0, 0.0),
-            node(2, NodeKind::Sink, 500.0, 0.0),
-            node(3, NodeKind::Source, 0.0, 150.0),
+            node(0, SOURCE, 0.0, 0.0),
+            node(1, GAIN, 250.0, 0.0),
+            node(2, SINK, 500.0, 0.0),
+            node(3, SOURCE, 0.0, 150.0),
         ];
         let connections = HashMap::from([
             (
@@ -256,7 +261,7 @@ mod tests {
         assert_eq!(routes(&cache), routed);
 
         // A node far outside every influence area doesn't matter either.
-        nodes.push(node(4, NodeKind::Gain, 5_000.0, 5_000.0));
+        nodes.push(node(4, GAIN, 5_000.0, 5_000.0));
         assert_eq!(
             cache.update(&nodes, &connections, Duration::MAX).recomputed,
             0

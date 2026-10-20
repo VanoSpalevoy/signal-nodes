@@ -1,6 +1,7 @@
 //! Left node palette.
 //!
-//! One button per [`NodeKind`], filled with the kind's color, with dark
+//! One button per entry of `app.palette` (every [`NodeKind`] of the loaded
+//! plugins, generators first), filled with the kind's color, with dark
 //! ([`PANEL_BG`](super::PANEL_BG)) text and outline.
 //!
 //! - **Click** — requests a node of that kind via `app.requested_node`; the canvas
@@ -13,7 +14,9 @@
 use eframe::egui;
 
 use super::{caption, node_color, panel_frame};
-use crate::editor::{NodeKind, SignalNodesApp, Text};
+#[cfg(doc)]
+use crate::editor::NodeKind;
+use crate::editor::{SignalNodesApp, Text};
 
 /// Palette width, including the panel frame's margins.
 const PALETTE_WIDTH: f32 = 136.0;
@@ -29,7 +32,7 @@ pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             caption(ui, app.language.text(Text::Nodes));
             ui.add_space(4.0);
-            for kind in NodeKind::ALL {
+            for kind in &app.palette {
                 let response = ui.add_sized(
                     [ui.available_width(), BUTTON_HEIGHT],
                     // Inverse of a node: kind-colored fill, dark text and outline.
@@ -43,9 +46,9 @@ pub(super) fn show(app: &mut SignalNodesApp, ui: &mut egui::Ui) {
                     .sense(egui::Sense::click_and_drag()),
                 );
 
-                response.dnd_set_drag_payload(kind);
+                response.dnd_set_drag_payload(kind.clone());
                 if response.clicked() {
-                    app.requested_node = Some(kind);
+                    app.requested_node = Some(kind.clone());
                 }
                 // While a drag is in progress, egui shows the grabbing cursor itself.
                 if response.hovered() && !egui::DragAndDrop::has_any_payload(ui.ctx()) {
