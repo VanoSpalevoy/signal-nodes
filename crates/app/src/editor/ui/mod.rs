@@ -55,7 +55,7 @@ pub(super) use canvas::RouteCache;
 #[cfg(test)]
 pub(super) use node::std_kind;
 pub(super) use node::{NodeConfig, NodeKind, NodeWidget, SocketKind, SocketRef};
-pub(super) use placement::{free_pos, place_new_node, slide};
+pub(super) use placement::{free_pos, place_new_node, settle};
 
 /// Darkest background: text edits, slider rails and other "extreme" backgrounds.
 const WINDOW_BG: egui::Color32 = egui::Color32::from_rgb(6, 7, 9);

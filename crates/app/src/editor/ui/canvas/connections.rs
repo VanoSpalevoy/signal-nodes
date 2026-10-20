@@ -5,7 +5,7 @@
 
 use eframe::egui;
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use super::CONNECTION_MIN_HANDLE;
@@ -15,6 +15,9 @@ use crate::editor::{NodeWidget, SocketRef};
 /// Time per frame for recomputing connection routes (see [`RouteCache::update`]);
 /// the rest wait for the next frames.
 pub(super) const ROUTING_BUDGET: Duration = Duration::from_millis(4);
+/// Share of [`ROUTING_BUDGET`] that may go to refreshing routes that are outdated
+/// but still fit to draw; the rest is kept for routes that must change.
+const REFRESH_SHARE: f32 = 0.5;
 
 /// One connection's route, with what later connections need to route around it.
 pub(super) struct RoutedConnection {
@@ -24,8 +27,10 @@ pub(super) struct RoutedConnection {
     pub(super) from: SocketRef,
     /// Hash of everything the route was computed from (see [`RouteCache::update`]).
     key: u64,
-    /// A stand-in (the plain curve) for a new connection that wasn't routed yet
-    /// because the frame's budget ran out; replaced as soon as possible.
+    /// The output and input socket positions the route runs between.
+    ends: [egui::Pos2; 2],
+    /// A stand-in (the plain curve) for a connection that wasn't routed for its
+    /// current ends because the frame's budget ran out; replaced as soon as possible.
     provisional: bool,
     /// How to draw the connection, in canvas coordinates.
     pub(super) route: Route,
@@ -34,19 +39,26 @@ pub(super) struct RoutedConnection {
     /// Hash of `polyline`: later connections' keys depend on this, not on `key`, so
     /// recomputing a route that comes out the same doesn't reroute them.
     shape: u64,
-    /// Bounds of `polyline`.
-    bounds: egui::Rect,
+    /// Bounds of `polyline`, also used by the canvas to skip connections off screen.
+    pub(super) bounds: egui::Rect,
 }
 
 impl RoutedConnection {
-    fn new(to: SocketRef, from: SocketRef, key: u64, route: Route, provisional: bool) -> Self {
+    fn new(
+        (to, from): (SocketRef, SocketRef),
+        ends: [egui::Pos2; 2],
+        key: u64,
+        route: Route,
+        provisional: bool,
+    ) -> Self {
         let polyline = route.polyline();
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = KeyHasher::default();
         hash_points(&mut hasher, &polyline);
         Self {
             to,
             from,
             key,
+            ends,
             provisional,
             route,
             shape: hasher.finish(),
@@ -75,6 +87,11 @@ pub(super) struct RouteUpdate {
 pub(in crate::editor) struct RouteCache {
     /// Routes as of the last [`update`](Self::update), in routing order.
     routes: Vec<RoutedConnection>,
+    /// Fingerprint of the nodes and connections the last update saw.
+    inputs: u64,
+    /// The last update left nothing deferred: with the same inputs, the next one
+    /// would have nothing to do.
+    settled: bool,
 }
 
 impl RouteCache {
@@ -86,6 +103,9 @@ impl RouteCache {
     /// Brings the routes up to date with `nodes` and `connections`
     /// (`SignalNodesApp::connections`: input → output).
     ///
+    /// When neither changed since an update that finished everything, returns at
+    /// once (an order-independent fingerprint of both, no per-connection work).
+    ///
     /// Routing runs a path search per blocked connection, so routes are kept per
     /// connection. A route's key hashes its ends and the nodes, stubs and earlier
     /// routes' shapes (polylines) within its [`routing::influence`] area; it is
@@ -93,21 +113,33 @@ impl RouteCache {
     /// connections near it, and those after them only if a nearby route actually
     /// changed shape, not every connection on the canvas.
     ///
-    /// Recomputing stops once it has taken `budget` (after at least one route): the
-    /// remaining outdated connections keep their old route and new ones get the
-    /// plain curve, both counted as [`deferred`](RouteUpdate::deferred), for the next
-    /// update to finish. During a long drag the last connections in the order may
-    /// therefore catch up only once the drag stops.
+    /// Recomputing is limited to `budget` per update (after at least one route),
+    /// spent by priority. An outdated route whose ends didn't move and that still
+    /// keeps out of every node ([`routing::still_clear`]) is fit to draw, and most
+    /// come out the same anyway: those are refreshed only within the first
+    /// [`REFRESH_SHARE`] of the budget. The rest goes to routes that must change
+    /// (moved ends, a node in the way, new connections). Whatever is left over is
+    /// [`deferred`](RouteUpdate::deferred) to the next updates: it keeps its old
+    /// route if its ends are the same, otherwise it gets the plain curve between
+    /// its new ends (so a wire never lags behind a dragged node). Once the layout
+    /// holds still, every route catches up to exactly what routing all of them
+    /// afresh would give.
     pub(super) fn update(
         &mut self,
         nodes: &[NodeWidget],
         connections: &HashMap<SocketRef, SocketRef>,
         budget: Duration,
     ) -> RouteUpdate {
+        let inputs = fingerprint(nodes, connections);
+        if self.settled && inputs == self.inputs {
+            return RouteUpdate::default();
+        }
+        self.inputs = inputs;
+
+        let by_id: HashMap<usize, &NodeWidget> = nodes.iter().map(|node| (node.id, node)).collect();
         let socket_pos = |socket: SocketRef| {
-            nodes
-                .iter()
-                .find(|node| node.id == socket.node_id)
+            by_id
+                .get(&socket.node_id)
                 .map(|node| node.socket_pos(socket.side, socket.index))
         };
         // Sorted by ID, so raising a node (which only reorders `nodes`) changes no key.
@@ -134,6 +166,7 @@ impl RouteCache {
         let mut routed: Vec<RoutedConnection> = Vec::with_capacity(ends.len());
         let mut update = RouteUpdate::default();
         let started = Instant::now();
+        let refresh_budget = budget.mul_f32(REFRESH_SHARE);
         for &(to, from, start, end) in &ends {
             let area = routing::influence(start, end, CONNECTION_MIN_HANDLE);
             let obstacles: Vec<_> = node_rects
@@ -141,7 +174,7 @@ impl RouteCache {
                 .map(|(_, rect)| *rect)
                 .filter(|rect| rect.intersects(area))
                 .collect();
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = KeyHasher::default();
             hash_points(&mut hasher, &[start, end]);
             for rect in &obstacles {
                 hash_points(&mut hasher, &[rect.min, rect.max]);
@@ -163,34 +196,120 @@ impl RouteCache {
             }
             let key = hasher.finish();
 
+            let spent = |limit: Duration| update.recomputed > 0 && started.elapsed() >= limit;
             let cached = previous.remove(&to).filter(|cached| cached.from == from);
+            let same_ends = |cached: &RoutedConnection| cached.ends == [start, end];
             let connection = match cached {
                 Some(cached) if cached.key == key && !cached.provisional => cached,
-                cached if update.recomputed > 0 && started.elapsed() >= budget => {
+                Some(cached)
+                    if !cached.provisional
+                        && same_ends(&cached)
+                        && spent(refresh_budget)
+                        && routing::still_clear(&cached.route, &obstacles) =>
+                {
                     update.deferred += 1;
-                    cached.unwrap_or_else(|| {
-                        let curve = routing::bezier(start, end, CONNECTION_MIN_HANDLE);
-                        RoutedConnection::new(to, from, key, Route::Curve(curve), true)
-                    })
+                    cached
+                }
+                cached if spent(budget) => {
+                    update.deferred += 1;
+                    match cached {
+                        Some(cached) if same_ends(&cached) => cached,
+                        _ => {
+                            let curve = routing::bezier(start, end, CONNECTION_MIN_HANDLE);
+                            let route = Route::Curve(curve);
+                            RoutedConnection::new((to, from), [start, end], key, route, true)
+                        }
+                    }
                 }
                 _ => {
                     update.recomputed += 1;
                     let route =
                         routing::route(start, end, &obstacles, &wires, CONNECTION_MIN_HANDLE);
-                    RoutedConnection::new(to, from, key, route, false)
+                    RoutedConnection::new((to, from), [start, end], key, route, false)
                 }
             };
             routed.push(connection);
         }
         self.routes = routed;
+        self.settled = update.deferred == 0;
         update
     }
 }
 
+/// A fingerprint of everything routes are computed from: each node's ID and rect
+/// and each connection. Order-independent (a sum of per-item hashes), so it needs
+/// no sorting and raising a node doesn't change it.
+fn fingerprint(nodes: &[NodeWidget], connections: &HashMap<SocketRef, SocketRef>) -> u64 {
+    let item = |hash: &dyn Fn(&mut KeyHasher)| {
+        let mut hasher = KeyHasher::default();
+        hash(&mut hasher);
+        hasher.finish()
+    };
+    let nodes = nodes.iter().fold(0u64, |sum, node| {
+        let rect = node.rect();
+        sum.wrapping_add(item(&|hasher| {
+            node.id.hash(hasher);
+            hash_points(hasher, &[rect.min, rect.max]);
+        }))
+    });
+    let connections = connections.iter().fold(0u64, |sum, (to, from)| {
+        sum.wrapping_add(item(&|hasher| (to, from).hash(hasher)))
+    });
+    item(&|hasher| (nodes, connections).hash(hasher))
+}
+
 /// Hashes the bits of `points`, so equal layouts give equal keys.
-fn hash_points(hasher: &mut DefaultHasher, points: &[egui::Pos2]) {
+fn hash_points(hasher: &mut KeyHasher, points: &[egui::Pos2]) {
     for point in points {
-        [point.x, point.y].map(f32::to_bits).hash(hasher);
+        hasher.write_u64(u64::from(point.x.to_bits()) << 32 | u64::from(point.y.to_bits()));
+    }
+}
+
+/// A fast, non-cryptographic hasher for route keys (the "Fx" hash used by rustc):
+/// a rotate, xor and multiply per word. The standard SipHash is built to resist
+/// crafted collisions, which cache keys of a local layout don't need; here it was
+/// most of the time an update spends when few routes change.
+#[derive(Default)]
+struct KeyHasher(u64);
+
+impl KeyHasher {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
+impl Hasher for KeyHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.add(u64::from_le_bytes(chunk.try_into().expect("8 bytes")));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut word = [0; 8];
+            word[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.add(u64::from(value));
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.add(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.add(value);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
     }
 }
 
@@ -294,6 +413,52 @@ mod tests {
         let second = cache.update(&nodes, &connections, Duration::ZERO);
         assert_eq!(second.deferred, 0);
         assert_eq!(routes(&cache), routes(&full));
+    }
+
+    #[test]
+    fn budgeted_updates_catch_up_to_routing_everything_afresh() {
+        let (mut nodes, connections) = layout();
+        let mut cache = RouteCache::default();
+        cache.update(&nodes, &connections, Duration::MAX);
+
+        // Moves in small budgets, as during a drag: outdated routes may linger.
+        for step in 0..10 {
+            nodes[1].pos.y = 20.0 * step as f32;
+            cache.update(&nodes, &connections, Duration::ZERO);
+        }
+        while cache.update(&nodes, &connections, Duration::ZERO).deferred > 0 {}
+
+        let mut fresh = RouteCache::default();
+        fresh.update(&nodes, &connections, Duration::MAX);
+        assert_eq!(routes(&cache), routes(&fresh));
+        // Settled: the next update returns at once.
+        assert_eq!(
+            cache.update(&nodes, &connections, Duration::ZERO),
+            RouteUpdate::default()
+        );
+    }
+
+    #[test]
+    fn a_deferred_connection_follows_its_moved_ends() {
+        let (mut nodes, connections) = layout();
+        let mut cache = RouteCache::default();
+        cache.update(&nodes, &connections, Duration::MAX);
+
+        // Move both connections' sources; with no budget only one is rerouted.
+        nodes[0].pos.y += 30.0;
+        nodes[3].pos.y += 30.0;
+        let update = cache.update(&nodes, &connections, Duration::ZERO);
+        assert_eq!(update.deferred, 1);
+
+        // The deferred one is drawn between its new ends, not left behind.
+        for routed in cache.routes() {
+            let pos = |socket: SocketRef| {
+                let node = nodes.iter().find(|node| node.id == socket.node_id).unwrap();
+                node.socket_pos(socket.side, socket.index)
+            };
+            assert_eq!(routed.polyline.first(), Some(&pos(routed.from)));
+            assert_eq!(routed.polyline.last(), Some(&pos(routed.to)));
+        }
     }
 
     #[test]

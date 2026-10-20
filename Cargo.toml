@@ -10,6 +10,16 @@ members = [
     "crates/app",
 ]
 
+# `cargo run` builds the dev profile. Unoptimized, connection routing (A*) and
+# egui itself run ~10x slower and the editor stutters while dragging, so dev
+# builds get basic optimizations (still with debug info and debug assertions),
+# and dependencies, rarely rebuilt, full ones.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "thin"

@@ -39,7 +39,9 @@
 //!
 //! | Input                                   | Effect                                          |
 //! |-----------------------------------------|-------------------------------------------------|
-//! | drag node body                          | move the node (auto-scrolls near the edges)     |
+//! | drag node body                          | move the node over the others (auto-scrolls     |
+//! |                                         | near the edges); on release it moves to a free  |
+//! |                                         | spot nearby or pushes its neighbors aside       |
 //! | `Esc` while dragging a node             | cancel the drag: the node goes back             |
 //! | click or drag node body                 | bring the node to the front                     |
 //! | primary click output socket             | select it as the pending source                 |
@@ -58,7 +60,8 @@
 //! Disconnecting goes through `SignalNodesApp::disconnect_input` / `disconnect_output`,
 //! moving through `SignalNodesApp::begin_drag` / `drag_to` / `end_drag` / `cancel_drag`.
 //!
-//! Feedback: the pending source gets an accent ring and a curve that follows the
+//! Feedback: while a node is dragged, ghosts show where nodes will be once it is
+//! dropped; the pending source gets an accent ring and a curve that follows the
 //! pointer; hovered sockets and delete buttons light up and show a pointing-hand
 //! cursor. Socket hit areas ([`SOCKET_HIT_SIZE`]) are larger than the drawn dot,
 //! but stay within half of the gap between nodes, so neighbors never share one.
@@ -77,8 +80,8 @@
 //! 3. Bring the connection routes up to date ([`RouteCache::update`], within
 //!    [`connections::ROUTING_BUDGET`]; another frame is requested if some were
 //!    deferred).
-//! 4. Paint ([`paint::paint`]): grid, connections, nodes, the pending-source
-//!    curve, then the palette drop preview on top.
+//! 4. Paint ([`paint::paint`]): grid, connections, nodes, the node drop preview,
+//!    the pending-source curve, then the palette drop preview on top.
 
 mod connections;
 mod interaction;

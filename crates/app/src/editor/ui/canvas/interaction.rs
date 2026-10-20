@@ -79,9 +79,9 @@ fn edge_scroll(ui: &egui::Ui, viewport: egui::Rect, pointer: egui::Pos2) {
 /// can't drift away from the cursor when the view scrolls mid-drag (edge scroll,
 /// mouse wheel or trackpad).
 ///
-/// The move itself is `SignalNodesApp::drag_to` (which keeps the node from being
-/// pushed into another one); the whole gesture is one drag from
-/// `begin_drag` to `end_drag`. After `cancel_drag` (`Esc`) the rest of the
+/// The move itself is `SignalNodesApp::drag_to` (the node may pass over others);
+/// the whole gesture is one drag from `begin_drag` to `end_drag`, which resolves
+/// the overlaps. After `cancel_drag` (`Esc`) the rest of the
 /// gesture is ignored. The grab offset is stored in egui memory under the body's id.
 fn drag_node(
     app: &mut SignalNodesApp,
