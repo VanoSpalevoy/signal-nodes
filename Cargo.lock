@@ -2728,6 +2728,9 @@ dependencies = [
  "eframe",
  "egui",
  "signal-nodes-core",
+ "signal-nodes-plugin-host",
+ "signal-nodes-plugin-std",
+ "signal-nodes-plugin-stub",
 ]
 
 [[package]]
@@ -2737,10 +2740,33 @@ version = "0.1.0"
 [[package]]
 name = "signal-nodes-plugin-api"
 version = "0.1.0"
+dependencies = [
+ "signal-nodes-core",
+]
 
 [[package]]
 name = "signal-nodes-plugin-host"
 version = "0.1.0"
+dependencies = [
+ "libloading",
+ "signal-nodes-core",
+ "signal-nodes-plugin-api",
+ "signal-nodes-plugin-std",
+]
+
+[[package]]
+name = "signal-nodes-plugin-std"
+version = "0.1.0"
+dependencies = [
+ "signal-nodes-plugin-api",
+]
+
+[[package]]
+name = "signal-nodes-plugin-stub"
+version = "0.1.0"
+dependencies = [
+ "signal-nodes-plugin-api",
+]
 
 [[package]]
 name = "signal-nodes-runtime"

@@ -1,0 +1,7 @@
+[package]
+name = "signal-nodes-plugin-std"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+signal-nodes-plugin-api = { path = "../plugin-api" }

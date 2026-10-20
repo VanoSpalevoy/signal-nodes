@@ -1,9 +1,11 @@
 pub mod error;
 pub mod model;
-mod traits;
 // mod real_time_processing;
 // mod async_processing;
 pub use crate::error::AppError;
-pub use model::{Node, NodeKind, NodeSocket, SampleBlock, SocketDirection};
+pub use model::{
+    Node, NodeFactory, NodeKind, NodeSocket, NodeSpec, ParamKind, ParamSpec, ParamValue,
+    SampleBlock, SignalEnvironment, SignalType, SocketDirection, Translation,
+};
 
 // #[cfg(test)]
