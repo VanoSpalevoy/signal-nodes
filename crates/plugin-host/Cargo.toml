@@ -1,12 +1,15 @@
 [package]
 name = "v-signal-nodes-plugin-host"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-libloading = "0.8"
-v-signal-nodes-core = { path = "../core" }
-v-signal-nodes-plugin-api = { path = "../plugin-api" }
+libloading.workspace = true
+v-signal-nodes-core.workspace = true
+v-signal-nodes-plugin-api.workspace = true
 
 [dev-dependencies]
-v-signal-nodes-plugin-std = { path = "../plugin-std" }
+v-signal-nodes-plugin-std.workspace = true
+
+[lints]
+workspace = true

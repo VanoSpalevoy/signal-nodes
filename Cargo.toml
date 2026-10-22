@@ -10,6 +10,25 @@ members = [
     "crates/app",
 ]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+egui = "0.36.2"
+eframe = "0.36.2"
+libloading = "0.8"
+v-signal-nodes-core = { path = "crates/core" }
+v-signal-nodes-runtime = { path = "crates/runtime" }
+v-signal-nodes-plugin-api = { path = "crates/plugin-api" }
+v-signal-nodes-plugin-host = { path = "crates/plugin-host" }
+v-signal-nodes-plugin-std = { path = "crates/plugin-std" }
+v-signal-nodes-plugin-stub = { path = "crates/plugin-stub" }
+
+[workspace.lints.clippy]
+# Every `unsafe` block carries a `// SAFETY:` comment; keep it that way.
+undocumented_unsafe_blocks = "warn"
+
 # `cargo run` builds the dev profile. Unoptimized, connection routing (A*) and
 # egui itself run ~10x slower and the editor stutters while dragging, so dev
 # builds get basic optimizations (still with debug info and debug assertions),

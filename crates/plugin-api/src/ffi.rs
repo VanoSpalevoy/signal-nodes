@@ -46,7 +46,9 @@ pub type EntryFn = unsafe extern "C" fn() -> FfiPlugin;
 /// A borrowed slice.
 #[repr(C)]
 pub struct FfiSlice<T> {
+    /// First item; may dangle when `len == 0`.
     pub ptr: *const T,
+    /// Number of items.
     pub len: usize,
 }
 
@@ -59,6 +61,7 @@ impl<T> Clone for FfiSlice<T> {
 impl<T> Copy for FfiSlice<T> {}
 
 impl<T> FfiSlice<T> {
+    /// Borrows `items`.
     pub fn new(items: &[T]) -> Self {
         Self {
             ptr: items.as_ptr(),
@@ -100,8 +103,11 @@ impl FfiStr {
 /// A socket of a [`FfiNodeSpec`]; the direction is given by the list it's in.
 #[repr(C)]
 pub struct FfiSocket {
+    /// Label (English).
     pub name: FfiStr,
+    /// [`SignalType`] code.
     pub signal_type: u8,
+    /// [`SignalEnvironment`] code.
     pub signal_environment: u8,
 }
 
@@ -110,32 +116,49 @@ pub struct FfiSocket {
 /// toggle — `default` (non-zero is on).
 #[repr(C)]
 pub struct FfiParam {
+    /// Stable id within the node type.
     pub id: FfiStr,
+    /// Label (English).
     pub name: FfiStr,
+    /// [`ParamKind`] code.
     pub kind: u8,
+    /// Lowest number.
     pub min: f32,
+    /// Highest number.
     pub max: f32,
+    /// Default number, choice index or toggle state.
     pub default: f32,
+    /// Choice options (English).
     pub options: FfiSlice<FfiStr>,
 }
 
 /// A [`Translation`].
 #[repr(C)]
 pub struct FfiTranslation {
+    /// Language code, e.g. `"ru"`.
     pub language: FfiStr,
+    /// English text being translated.
     pub source: FfiStr,
+    /// The translation.
     pub text: FfiStr,
 }
 
 /// A [`NodeSpec`].
 #[repr(C)]
 pub struct FfiNodeSpec {
+    /// Namespaced type id, e.g. `"std.gain"`.
     pub type_id: FfiStr,
+    /// Title (English).
     pub name: FfiStr,
+    /// [`NodeKind`] code.
     pub kind: u8,
+    /// Input sockets, in order.
     pub inputs: FfiSlice<FfiSocket>,
+    /// Output sockets, in order.
     pub outputs: FfiSlice<FfiSocket>,
+    /// Parameters, in order.
     pub params: FfiSlice<FfiParam>,
+    /// Translations of the English strings above.
     pub translations: FfiSlice<FfiTranslation>,
 }
 
@@ -144,29 +167,39 @@ pub struct FfiNodeSpec {
 pub struct FfiPlugin {
     /// Opaque plugin state; null if the plugin failed to initialize.
     pub ctx: *mut c_void,
+    /// The plugin's name.
     pub name: unsafe extern "C" fn(ctx: *const c_void) -> FfiStr,
+    /// Number of node types.
     pub node_count: unsafe extern "C" fn(ctx: *const c_void) -> usize,
     /// Spec of node type `index` (`< node_count`).
     pub node_spec: unsafe extern "C" fn(ctx: *const c_void, index: usize) -> FfiNodeSpec,
     /// A new processor for node type `index` (`< node_count`).
     pub create_processor: unsafe extern "C" fn(ctx: *const c_void, index: usize) -> FfiProcessor,
+    /// Frees the plugin; called once, after all its processors are dropped.
     pub drop: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
 /// Arguments of [`FfiProcessor::process`]; the parts of a [`ProcessIo`].
 #[repr(C)]
 pub struct FfiProcessArgs {
+    /// Samples per second.
     pub sample_rate: f32,
+    /// Samples in every buffer.
     pub frames: usize,
+    /// Parameter values, in spec order.
     pub params: FfiSlice<ParamValue>,
+    /// Input buffers, in socket order.
     pub inputs: FfiSlice<RawBuffer>,
+    /// Output buffers, in socket order.
     pub outputs: FfiSlice<RawBuffer>,
 }
 
 /// Result of [`FfiProcessor::process`]; on failure `message` holds the error.
 #[repr(C)]
 pub struct FfiStatus {
+    /// Whether the call succeeded.
     pub ok: bool,
+    /// The error if not `ok`; borrowed until the next call on the processor.
     pub message: FfiStr,
 }
 
@@ -177,6 +210,7 @@ pub struct FfiProcessor {
     pub ctx: *mut c_void,
     /// Must be called with arguments that satisfy [`ProcessIo::from_raw`].
     pub process: unsafe extern "C" fn(ctx: *mut c_void, args: FfiProcessArgs) -> FfiStatus,
+    /// Frees the processor; called once.
     pub drop: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
@@ -251,7 +285,7 @@ fn bad_code(what: &str, code: u8) -> AppError {
 ///
 /// Every `FfiStr`/`FfiSlice` in `spec` must be valid (see [`FfiSlice::as_slice`]).
 pub unsafe fn read_spec(spec: &FfiNodeSpec) -> Result<NodeSpec, AppError> {
-    // SAFETY (whole function): forwarded to the caller.
+    // SAFETY: forwarded to the caller (covers the whole function).
     unsafe {
         let sockets = |list: FfiSlice<FfiSocket>, direction| -> Result<Vec<NodeSocket>, AppError> {
             list.as_slice()
@@ -524,6 +558,7 @@ unsafe extern "C" fn processor_process(ctx: *mut c_void, args: FfiProcessArgs) -
     // SAFETY: the host passes the ctx it got from `create_processor`, and
     // arguments that satisfy `ProcessIo::from_raw` (see `FfiProcessor::process`).
     let state = unsafe { &mut *ctx.cast::<ExportedProcessor>() };
+    // SAFETY: `args` satisfy `ProcessIo::from_raw`, so every slice in them is valid.
     let result = catch_unwind(AssertUnwindSafe(|| unsafe {
         let mut io = ProcessIo::from_raw(
             args.sample_rate,

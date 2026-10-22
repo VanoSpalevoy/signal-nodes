@@ -1,7 +1,10 @@
 [package]
 name = "v-signal-nodes-plugin-api"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-v-signal-nodes-core = { path = "../core" }
+v-signal-nodes-core.workspace = true
+
+[lints]
+workspace = true

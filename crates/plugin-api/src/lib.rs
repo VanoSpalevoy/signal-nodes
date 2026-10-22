@@ -28,6 +28,9 @@
 //! export_plugin!(MyPlugin);
 //! ```
 
+// This is the contract plugin authors build against: everything public is documented.
+#![warn(missing_docs)]
+
 use std::marker::PhantomData;
 use std::slice;
 
@@ -61,6 +64,7 @@ pub trait NodeProvider: Send + Sync {
 
 /// Collects the node types a plugin offers.
 pub trait Registrar {
+    /// Adds one node type.
     fn register_node(&mut self, provider: Box<dyn NodeProvider>);
 }
 
@@ -83,7 +87,9 @@ pub trait Plugin {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct RawBuffer {
+    /// First sample.
     pub ptr: *mut f32,
+    /// Number of samples.
     pub len: usize,
 }
 
@@ -181,10 +187,12 @@ impl<'a> ProcessIo<'a> {
             .unwrap_or(false)
     }
 
+    /// Number of inputs.
     pub fn input_count(&self) -> usize {
         self.inputs.len()
     }
 
+    /// Number of outputs.
     pub fn output_count(&self) -> usize {
         self.outputs.len()
     }
