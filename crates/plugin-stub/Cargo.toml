@@ -1,7 +1,10 @@
 [package]
-name = "signal-nodes-plugin-stub"
-version = "0.1.0"
-edition = "2024"
+name = "v-signal-nodes-plugin-stub"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-signal-nodes-plugin-api = { path = "../plugin-api" }
+v-signal-nodes-plugin-api.workspace = true
+
+[lints]
+workspace = true

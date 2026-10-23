@@ -28,9 +28,9 @@ pub struct ParamSpec {
 
 /// Current value of a parameter.
 ///
-/// `repr(C, u8)` because values are passed to dynamically loaded plugins as is.
+/// Not part of the C ABI: dynamically loaded plugins get values as
+/// `plugin-api`'s `ffi::FfiParamValue`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(C, u8)]
 pub enum ParamValue {
     Number(f32),
     /// Index into [`ParamKind::Choice::options`].

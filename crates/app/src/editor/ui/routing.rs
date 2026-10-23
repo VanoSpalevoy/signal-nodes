@@ -34,7 +34,9 @@
 //! # Cost
 //!
 //! Routes are recomputed on every frame of a drag, so a search is kept cheap: its
-//! buffers are reused across searches (see `Scratch`), a search that runs long
+//! heuristic counts the turns a path can't avoid ([`min_turns`]) besides the
+//! distance, ties go to the state closest to the goal, its buffers are reused
+//! across searches (see `Scratch`), a search that runs long
 //! checks once with a flood fill that the input can be reached at all
 //! ([`REACHABILITY_CHECK_AFTER`]), and none expands more than [`MAX_EXPANDED`]
 //! states. Giving up means the plain curve.
@@ -169,6 +171,27 @@ pub(super) fn route(
     }
 }
 
+/// Whether `route` (computed earlier for the same ends) still keeps out of every
+/// node in `obstacles`: a cheap check, no search. A route that passes is fit to
+/// draw, though [`route`] might find a better one now (a node in the way may have
+/// moved off, or wires moved).
+pub(super) fn still_clear(route: &Route, obstacles: &[Rect]) -> bool {
+    match route {
+        Route::Curve(curve) => !curve_hits(curve, obstacles),
+        // Segments are orthogonal, so each one's bounds is the segment itself.
+        // Strictly inside only: the stubs start on their nodes' edges.
+        Route::Path(points) => !points.windows(2).any(|segment| {
+            let bounds = Rect::from_two_pos(segment[0], segment[1]);
+            obstacles.iter().any(|rect| {
+                bounds.min.x < rect.max.x
+                    && bounds.max.x > rect.min.x
+                    && bounds.min.y < rect.max.y
+                    && bounds.max.y > rect.min.y
+            })
+        }),
+    }
+}
+
 /// The curve as a polyline of [`CURVE_SAMPLES`] segments.
 fn sample(curve: &[Pos2; 4]) -> Vec<Pos2> {
     (0..=CURVE_SAMPLES)
@@ -227,6 +250,43 @@ fn curve_hits(curve: &[Pos2; 4], obstacles: &[Rect]) -> bool {
 /// Grid directions: right, left, down, up.
 const DIRECTIONS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 const RIGHT: usize = 0;
+const LEFT: usize = 1;
+
+/// A lower bound on the turns (each costing [`TURN_COST`]) a path heading
+/// `direction` still needs to reach a goal `(di, dj)` cells away, counting the
+/// penalty for arriving other than heading right as a turn. Part of the A*
+/// heuristic: never too high, so paths stay the cheapest; without it, A* explores
+/// every path that is as short as the best one before paying for its turns.
+fn min_turns(di: i32, dj: i32, direction: usize) -> u32 {
+    let horizontal = direction == RIGHT || direction == LEFT;
+    match (di, dj) {
+        (0, 0) => 0,
+        // Another row: turn to vertical (if heading horizontally), then turn back
+        // to the right or arrive heading elsewhere.
+        (_, dj) if dj != 0 => {
+            if horizontal {
+                2
+            } else {
+                1
+            }
+        }
+        // Same row ahead: heading right needs nothing, left must turn around.
+        (di, _) if di > 0 => match direction {
+            RIGHT => 0,
+            LEFT => 2,
+            _ => 1,
+        },
+        // Same row behind: going left and arriving needs at least a turn,
+        // heading right must turn around first.
+        _ => {
+            if direction == RIGHT {
+                2
+            } else {
+                1
+            }
+        }
+    }
+}
 
 /// Orthogonal path around `obstacles`, as corner points from `start` to `end`;
 /// `None` if the search area has no way through.
@@ -290,22 +350,35 @@ thread_local! {
 
 /// Per-state bookkeeping of the A* in [`Grid::search`].
 ///
-/// `cost` and `came_from` are valid only for states whose `seen` entry equals
-/// `generation`, so starting a search is just bumping `generation`, not refilling
-/// the buffers.
+/// A state's entry is valid only when its `seen` equals `generation`, so starting
+/// a search is just bumping `generation`, not refilling the buffers.
 #[derive(Default)]
 struct SearchBuffers {
-    cost: Vec<u32>,
-    came_from: Vec<u32>,
-    seen: Vec<u32>,
+    /// Per search state; see [`StateEntry`].
+    states: Vec<StateEntry>,
     generation: u32,
-    /// Open set as `(estimated total cost, state)`.
-    open: BinaryHeap<Reverse<(u32, u32)>>,
+    /// Open set as `(estimated total cost, estimated remaining cost, state)`: of
+    /// equally promising states the one closest to the goal comes first, so A*
+    /// heads for the goal instead of widening across a plateau of equal estimates.
+    open: BinaryHeap<Reverse<(u32, u32, u32)>>,
     /// Per grid point: reached by this search's flood fill when equal to
     /// `generation` (see [`Grid::connected`]).
     flooded: Vec<u32>,
     /// Flood fill queue of grid point indices.
     queue: Vec<u32>,
+}
+
+/// What A* knows about one search state. The fields sit together (not in one
+/// array each) because they are always read together: one cache miss per
+/// neighbor instead of three, in the hottest loop of routing.
+#[derive(Clone, Copy, Default)]
+struct StateEntry {
+    /// The search `generation` this entry belongs to.
+    seen: u32,
+    /// Best known path cost to the state.
+    cost: u32,
+    /// The state that cost was reached from, [`NO_STATE`] for the start.
+    came_from: u32,
 }
 
 /// `came_from` of the start state.
@@ -316,10 +389,8 @@ impl SearchBuffers {
     /// each), all unseen.
     fn start(&mut self, points: usize) {
         let states = points * 4;
-        if self.seen.len() < states {
-            self.cost.resize(states, 0);
-            self.came_from.resize(states, NO_STATE);
-            self.seen.resize(states, 0);
+        if self.states.len() < states {
+            self.states.resize(states, StateEntry::default());
         }
         if self.flooded.len() < points {
             self.flooded.resize(points, 0);
@@ -327,7 +398,7 @@ impl SearchBuffers {
         self.generation = self.generation.wrapping_add(1);
         if self.generation == 0 {
             // Wrapped around: old stamps could look current again.
-            self.seen.fill(0);
+            self.states.fill(StateEntry::default());
             self.flooded.fill(0);
             self.generation = 1;
         }
@@ -336,17 +407,20 @@ impl SearchBuffers {
 
     /// Best known cost of `state` in this search.
     fn cost(&self, state: usize) -> u32 {
-        if self.seen[state] == self.generation {
-            self.cost[state]
+        let entry = self.states[state];
+        if entry.seen == self.generation {
+            entry.cost
         } else {
             u32::MAX
         }
     }
 
     fn set(&mut self, state: usize, cost: u32, came_from: u32) {
-        self.seen[state] = self.generation;
-        self.cost[state] = cost;
-        self.came_from[state] = came_from;
+        self.states[state] = StateEntry {
+            seen: self.generation,
+            cost,
+            came_from,
+        };
     }
 }
 
@@ -504,8 +578,11 @@ impl<'a> Grid<'a> {
         let start = self.index((0, 0))?;
         let goal = self.index(self.goal)?;
         let state = |index: usize, direction: usize| index * 4 + direction;
-        let heuristic =
-            |(i, j): (i32, i32)| (i.abs_diff(self.goal.0) + j.abs_diff(self.goal.1)) * STEP_COST;
+        let heuristic = |cell: (i32, i32), direction: usize| {
+            let (di, dj) = (self.goal.0 - cell.0, self.goal.1 - cell.1);
+            (di.unsigned_abs() + dj.unsigned_abs()) * STEP_COST
+                + min_turns(di, dj, direction) * TURN_COST
+        };
         // A walled-in end would make A* explore the whole area before giving up,
         // on every layout change; bail out early instead.
         let has_way_out = |(i, j): (i32, i32)| {
@@ -520,22 +597,23 @@ impl<'a> Grid<'a> {
 
         buffers.start(self.flags.len());
         buffers.set(state(start, RIGHT), 0, NO_STATE);
+        let h = heuristic((0, 0), RIGHT);
         buffers
             .open
-            .push(Reverse((heuristic((0, 0)), state(start, RIGHT) as u32)));
+            .push(Reverse((h, h, state(start, RIGHT) as u32)));
 
         let mut expanded = 0;
-        while let Some(Reverse((estimate, current))) = buffers.open.pop() {
+        while let Some(Reverse((estimate, h, current))) = buffers.open.pop() {
             let current = current as usize;
             let (index, direction) = (current / 4, current % 4);
-            let cell = self.cell_of(index);
+            let current_cost = buffers.cost(current);
             // A state is pushed again whenever a cheaper way to it turns up; the
             // older, costlier entries are left in the heap and skipped here.
-            if estimate > buffers.cost(current) + heuristic(cell) {
+            if estimate > current_cost + h {
                 continue;
             }
             if index == goal {
-                return Some(self.cells_to(current, &buffers.came_from));
+                return Some(self.cells_to(current, &buffers.states));
             }
             expanded += 1;
             if expanded > MAX_EXPANDED
@@ -543,6 +621,7 @@ impl<'a> Grid<'a> {
             {
                 return None;
             }
+            let cell = self.cell_of(index);
             for (next_direction, (di, dj)) in DIRECTIONS.iter().enumerate() {
                 // Never reverse on the spot.
                 if next_direction == direction ^ 1 {
@@ -569,12 +648,11 @@ impl<'a> Grid<'a> {
                     step += WIRE_COST;
                 }
                 let next = state(next_index, next_direction);
-                let next_cost = buffers.cost(current) + step;
+                let next_cost = current_cost + step;
                 if next_cost < buffers.cost(next) {
                     buffers.set(next, next_cost, current as u32);
-                    buffers
-                        .open
-                        .push(Reverse((next_cost + heuristic(next_cell), next as u32)));
+                    let h = heuristic(next_cell, next_direction);
+                    buffers.open.push(Reverse((next_cost + h, h, next as u32)));
                 }
             }
         }
@@ -611,10 +689,10 @@ impl<'a> Grid<'a> {
     }
 
     /// The cells from the start to `state`, following `came_from` back.
-    fn cells_to(&self, mut state: usize, came_from: &[u32]) -> Vec<(i32, i32)> {
+    fn cells_to(&self, mut state: usize, states: &[StateEntry]) -> Vec<(i32, i32)> {
         let mut cells = vec![self.cell_of(state / 4)];
-        while came_from[state] != NO_STATE {
-            state = came_from[state] as usize;
+        while states[state].came_from != NO_STATE {
+            state = states[state].came_from as usize;
             cells.push(self.cell_of(state / 4));
         }
         cells.reverse();
@@ -847,6 +925,33 @@ mod tests {
         let route = route(start, end, &boxed, &[], 20.0);
 
         assert_eq!(route, Route::Curve(bezier(start, end, 20.0)));
+    }
+
+    #[test]
+    fn still_clear_until_a_node_moves_into_the_route() {
+        let (a, blocker, b) = (node(0.0, 0.0), node(250.0, 0.0), node(500.0, 0.0));
+        let (start, end) = (pos2(160.0, 45.0), pos2(500.0, 45.0));
+        let path = route(start, end, &[a, blocker, b], &[], 20.0);
+        assert!(matches!(path, Route::Path(_)));
+        let curve = Route::Curve(bezier(start, end, 20.0));
+
+        // The blocker moving off leaves the path fit to draw (just not the best).
+        assert!(still_clear(&path, &[a, b]));
+        assert!(still_clear(&curve, &[a, b]));
+        // A node right across the middle blocks both.
+        let across = Rect::from_min_max(pos2(300.0, -200.0), pos2(340.0, 300.0));
+        assert!(!still_clear(&path, &[a, b, across]));
+        assert!(!still_clear(&curve, &[a, b, across]));
+    }
+
+    #[test]
+    fn min_turns_never_overestimates_simple_routes() {
+        // Straight ahead: no turns. A row below, heading right: down, then right.
+        assert_eq!(min_turns(5, 0, RIGHT), 0);
+        assert_eq!(min_turns(5, 3, RIGHT), 2);
+        // Heading down towards a goal below and ahead: one turn to the right.
+        assert_eq!(min_turns(5, 3, 2), 1);
+        assert_eq!(min_turns(0, 0, LEFT), 0);
     }
 
     #[test]

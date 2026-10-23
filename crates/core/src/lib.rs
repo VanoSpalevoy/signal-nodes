@@ -5,7 +5,7 @@ pub mod model;
 pub use crate::error::AppError;
 pub use model::{
     Node, NodeFactory, NodeKind, NodeSocket, NodeSpec, ParamKind, ParamSpec, ParamValue,
-    SampleBlock, SignalEnvironment, SignalType, SocketDirection, Translation,
+    SampleBlock, SignalEnvironment, SignalType, SocketDirection, TextKey, Translation,
 };
 
 // #[cfg(test)]

@@ -4,11 +4,12 @@
 //! back-to-front order.
 
 use eframe::egui;
+use std::collections::HashMap;
 
 use super::{CONNECTION_MIN_HANDLE, HEADER_HEIGHT, Hovered, View, delete_button_rect, drop_rect};
 use crate::editor::ui::routing::{self, Route};
 use crate::editor::ui::{ACCENT, DANGER, NodeKind, PANEL_BG, TEXT, TEXT_DIM, node_color};
-use crate::editor::{NodeWidget, SignalNodesApp, SocketKind, SocketRef};
+use crate::editor::{NodeWidget, SocketKind, SocketRef, VSignalNodesApp};
 
 /// Corner radius of a node.
 const NODE_ROUNDING: f32 = 8.0;
@@ -39,15 +40,18 @@ const ROUTE_CORNER_SEGMENTS: usize = 6;
 /// Longest miter at a connection's bend, in half-widths; sharper bends get a
 /// thinner join instead of a spike.
 const MITER_LIMIT: f32 = 2.0;
+/// Extra margin around a connection's bounds before it counts as off screen.
+const CULL_PADDING: f32 = 4.0;
 /// Background grid dots.
 const GRID_DOT: egui::Color32 = egui::Color32::from_rgb(28, 30, 37);
 
 /// Paints the canvas for one frame, back to front: the dot grid, connections
 /// (fading from the source node's kind color to the target's), nodes, the
-/// pending-source curve, and the palette drop preview on top. `viewport` is the
-/// visible screen area, `pointer` the pointer position if it is over it.
+/// node drop preview, the pending-source curve, and the palette drop preview on
+/// top. `viewport` is the visible screen area, `pointer` the pointer position if
+/// it is over it.
 pub(super) fn paint(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     ui: &egui::Ui,
     view: View,
     viewport: egui::Rect,
@@ -56,8 +60,9 @@ pub(super) fn paint(
 ) {
     let painter = ui.painter();
     paint_grid(painter, view, viewport);
-    paint_connections(app, painter, view);
+    paint_connections(app, painter, view, viewport);
     paint_nodes(app, painter, view, hovered);
+    paint_drop_preview(app, painter, view);
     paint_pending_connection(app, painter, view, ui.ctx().pointer_hover_pos());
     paint_palette_preview(app, ui.ctx(), painter, view, pointer);
 }
@@ -74,15 +79,28 @@ fn paint_curve(painter: &egui::Painter, points: [egui::Pos2; 4], stroke: egui::S
 /// Draws each connection along its route: the plain curve when nothing is in the
 /// way, otherwise the orthogonal path around the nodes with rounded corners. The
 /// line fades from the source node's kind color to the target node's.
-fn paint_connections(app: &SignalNodesApp, painter: &egui::Painter, view: View) {
-    let kind_color = |node_id: usize| {
-        app.nodes
-            .iter()
-            .find(|node| node.id == node_id)
-            .map_or(ACCENT, |node| node_color(&node.config.kind))
-    };
+///
+/// Connections entirely outside `viewport` are skipped before any geometry is
+/// built (by their route's bounds, padded for the line width and for a curve
+/// bulging slightly past its sampled polyline).
+fn paint_connections(
+    app: &VSignalNodesApp,
+    painter: &egui::Painter,
+    view: View,
+    viewport: egui::Rect,
+) {
+    let colors: HashMap<usize, egui::Color32> = app
+        .nodes
+        .iter()
+        .map(|node| (node.id, node_color(&node.config.kind)))
+        .collect();
+    let kind_color = |node_id: usize| colors.get(&node_id).copied().unwrap_or(ACCENT);
     let width = view.len(CONNECTION_WIDTH);
     for connection in app.routes.routes() {
+        let bounds = connection.bounds.expand(CONNECTION_WIDTH + CULL_PADDING);
+        if !view.rect(bounds).intersects(viewport) {
+            continue;
+        }
         let points = match &connection.route {
             Route::Curve(points) => egui::epaint::CubicBezierShape::from_points_stroke(
                 points.map(|p| view.pos(p)),
@@ -230,7 +248,7 @@ fn rounded_corners(points: &[egui::Pos2], radius: f32) -> Vec<egui::Pos2> {
 
 /// Draws a translucent curve from the pending source socket to the pointer.
 fn paint_pending_connection(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     painter: &egui::Painter,
     view: View,
     pointer: Option<egui::Pos2>,
@@ -274,7 +292,7 @@ fn paint_grid(painter: &egui::Painter, view: View, viewport: egui::Rect) {
 /// with their labels, and the delete cross, with hover and pending-source
 /// highlights. All text is resolved in the app's language and all sizes follow
 /// the zoom.
-fn paint_nodes(app: &SignalNodesApp, painter: &egui::Painter, view: View, hovered: &Hovered) {
+fn paint_nodes(app: &VSignalNodesApp, painter: &egui::Painter, view: View, hovered: &Hovered) {
     let language = app.language;
     let font = |size: f32| egui::FontId::proportional(view.len(size));
     for node in &app.nodes {
@@ -371,7 +389,7 @@ fn paint_delete_button(painter: &egui::Painter, view: View, node: &NodeWidget, h
 /// of the body color, so they read as cut into the outline; a hovered socket
 /// grows and turns accent-colored, and the pending source gets an accent ring.
 fn paint_sockets(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     node: &NodeWidget,
     painter: &egui::Painter,
     view: View,
@@ -382,7 +400,7 @@ fn paint_sockets(
         (SocketKind::Input, &node.config.inputs),
         (SocketKind::Output, &node.config.outputs),
     ] {
-        for (index, label) in sockets.iter().enumerate() {
+        for index in 0..sockets.len() {
             let socket = SocketRef {
                 node_id: node.id,
                 side,
@@ -415,7 +433,7 @@ fn paint_sockets(
             painter.text(
                 pos + egui::vec2(direction * view.len(SOCKET_LABEL_GAP), 0.0),
                 align,
-                node.config.text(label, app.language),
+                node.config.socket_label(side, index, app.language),
                 egui::FontId::proportional(view.len(11.0)),
                 TEXT_DIM,
             );
@@ -423,9 +441,41 @@ fn paint_sockets(
     }
 }
 
+/// Draws a translucent outline of a node of `color` at `rect` (canvas coordinates),
+/// for previews of where a node will be; returns the rect on screen.
+fn paint_ghost(
+    painter: &egui::Painter,
+    view: View,
+    rect: egui::Rect,
+    color: egui::Color32,
+) -> egui::Rect {
+    let rect = view.rect(rect);
+    let rounding = view.len(NODE_ROUNDING);
+    painter.rect_filled(rect, rounding, color.gamma_multiply(0.08));
+    painter.rect_stroke(
+        rect,
+        rounding,
+        egui::Stroke::new(view.len(NODE_OUTLINE_WIDTH), color.gamma_multiply(0.8)),
+        egui::StrokeKind::Inside,
+    );
+    rect
+}
+
+/// While a node is dragged, draws a ghost wherever a node would move if it were
+/// dropped now (`VSignalNodesApp::drop_moves`): the dragged node's landing spot,
+/// or the new places of the neighbors it pushes aside.
+fn paint_drop_preview(app: &VSignalNodesApp, painter: &egui::Painter, view: View) {
+    for (node_id, pos) in app.drop_moves() {
+        if let Some(node) = app.nodes.iter().find(|node| node.id == node_id) {
+            let rect = egui::Rect::from_min_size(pos, node.rect().size());
+            paint_ghost(painter, view, rect, node_color(&node.config.kind));
+        }
+    }
+}
+
 /// Draws a translucent node of the dragged palette kind exactly where it would be dropped.
 fn paint_palette_preview(
-    app: &SignalNodesApp,
+    app: &VSignalNodesApp,
     ctx: &egui::Context,
     painter: &egui::Painter,
     view: View,
@@ -434,16 +484,8 @@ fn paint_palette_preview(
     let (Some(kind), Some(pos)) = (egui::DragAndDrop::payload::<NodeKind>(ctx), pointer) else {
         return;
     };
-    let color = node_color(&kind);
-    let preview_rect = view.rect(drop_rect(&kind, pos, view, &app.nodes));
-    let rounding = view.len(NODE_ROUNDING);
-    painter.rect_filled(preview_rect, rounding, color.gamma_multiply(0.08));
-    painter.rect_stroke(
-        preview_rect,
-        rounding,
-        egui::Stroke::new(view.len(NODE_OUTLINE_WIDTH), color.gamma_multiply(0.8)),
-        egui::StrokeKind::Inside,
-    );
+    let rect = drop_rect(&kind, pos, view, &app.nodes);
+    let preview_rect = paint_ghost(painter, view, rect, node_color(&kind));
     painter.text(
         preview_rect.center(),
         egui::Align2::CENTER_CENTER,

@@ -1,14 +1,17 @@
 //! Keeping nodes from overlapping.
 //!
-//! Nodes always keep at least [`NODE_GAP`] between each other. Two strategies:
+//! Nodes keep at least [`NODE_GAP`] between each other (only a node being dragged
+//! may pass over the others until it is dropped). Two strategies:
 //!
-//! - [`slide`] — for dragging: the node moves towards the target and stops at the
-//!   first node in its way (swept per axis, so a fast pointer can't tunnel through).
-//!   It then slides along that node as the pointer keeps moving.
+//! - [`settle`] — for dropping a dragged node: if a free spot is within
+//!   [`DROP_SNAP_DISTANCE`], the node moves there; otherwise it stays where it
+//!   was dropped and pushes its neighbors aside, which may push theirs in turn.
 //! - [`free_pos`] — for adding and snapping: the nearest free position to the
 //!   wanted one, searched outwards on a grid.
 //!
 //! Everything is in canvas coordinates, and positions never go negative.
+
+use std::collections::VecDeque;
 
 use eframe::egui;
 
@@ -20,9 +23,12 @@ pub(super) const NODE_GAP: f32 = 10.0;
 const PLACEMENT_STEP: f32 = 10.0;
 /// Rings searched by [`free_pos`] before giving up and returning the wanted position.
 const MAX_SEARCH_RINGS: i32 = 200;
-/// Tolerance of every gap check, in canvas units. A node stopped at exactly
+/// How far [`settle`] moves a dropped node to get it clear of its neighbors. A node
+/// dropped deeper into others stays put and pushes them aside instead.
+const DROP_SNAP_DISTANCE: f32 = 100.0;
+/// Tolerance of every gap check, in canvas units. A node placed at exactly
 /// [`NODE_GAP`] can end up a rounding error closer; without the tolerance it would
-/// count as overlapping its neighbor next frame, and [`slide`] would let it through.
+/// still count as too close to its neighbor and be moved again.
 const EPSILON: f32 = 0.01;
 
 /// The zone around `rect` another node must stay out of: [`NODE_GAP`] wide, minus
@@ -43,67 +49,126 @@ pub(super) fn blocked(rect: egui::Rect, obstacles: &[egui::Rect]) -> bool {
     obstacles.iter().any(|obstacle| too_close(rect, *obstacle))
 }
 
-/// Moves a node from `current` towards `target` (its new top-left corner), stopping
-/// at the first obstacle in the way on each axis.
+/// New top-left positions of all `rects` (node rects, in the same order) after
+/// the node at index `dropped` was dropped where it is now.
 ///
-/// Obstacles the node already overlaps are ignored, so an overlapping node (from an
-/// older layout) can always be dragged free. Both axis orders (x then y, y then x)
-/// are tried and the result closer to `target` wins, so the node slides around
-/// corners in the direction the pointer went.
-pub(in crate::editor) fn slide(
-    current: egui::Rect,
-    target: egui::Pos2,
-    obstacles: &[egui::Rect],
-) -> egui::Pos2 {
-    let target = target.max(egui::Pos2::ZERO);
-    let obstacles: Vec<_> = obstacles
+/// 1. If the dropped node is free, or a free spot is at most
+///    [`DROP_SNAP_DISTANCE`] away ([`nearest_free_within`]), only the dropped node
+///    moves there. Next to a lone neighbor that is usually the case: getting above
+///    or below it takes at most the dropped node's height plus the gap.
+/// 2. Otherwise it was dropped deep into a group of nodes on purpose: it stays and
+///    pushes them aside ([`push_apart`]).
+///
+/// Whatever happens, the result has no two nodes closer than [`NODE_GAP`] (given
+/// that the nodes other than `dropped` were apart before) and no negative position.
+pub(in crate::editor) fn settle(rects: &[egui::Rect], dropped: usize) -> Vec<egui::Pos2> {
+    let mut rects = rects.to_vec();
+    let others: Vec<_> = rects
         .iter()
-        .copied()
-        .filter(|obstacle| !too_close(current, *obstacle))
+        .enumerate()
+        .filter(|(index, _)| *index != dropped)
+        .map(|(_, rect)| *rect)
         .collect();
-    let x_first = sweep_y(sweep_x(current, target.x, &obstacles), target.y, &obstacles);
-    let y_first = sweep_x(sweep_y(current, target.y, &obstacles), target.x, &obstacles);
-    if x_first.min.distance_sq(target) <= y_first.min.distance_sq(target) {
-        x_first.min
+    let rect = rects[dropped];
+    if let Some(pos) = nearest_free_within(rect, &others, DROP_SNAP_DISTANCE) {
+        rects[dropped] = egui::Rect::from_min_size(pos, rect.size());
     } else {
-        y_first.min
+        push_apart(&mut rects, dropped);
+    }
+    rects.iter().map(|rect| rect.min).collect()
+}
+
+/// The free top-left position for `rect` closest to where it is now, if one is at
+/// most `max_distance` away (`rect`'s own position when it is already free).
+///
+/// Exact, not a grid search: the closest free spot either keeps an axis of `rect`
+/// or touches the keep-out zone of an obstacle on it, so the candidates are every
+/// mix of `rect`'s own x/y and the edges of the obstacles nearby.
+fn nearest_free_within(
+    rect: egui::Rect,
+    obstacles: &[egui::Rect],
+    max_distance: f32,
+) -> Option<egui::Pos2> {
+    // Only obstacles that reach into the search area can give a close enough edge.
+    let area = rect.expand(max_distance + NODE_GAP);
+    let near: Vec<_> = obstacles
+        .iter()
+        .filter(|obstacle| obstacle.intersects(area))
+        .collect();
+    let mut xs = vec![rect.min.x];
+    let mut ys = vec![rect.min.y];
+    for obstacle in &near {
+        xs.extend([
+            obstacle.min.x - NODE_GAP - rect.width(),
+            obstacle.max.x + NODE_GAP,
+        ]);
+        ys.extend([
+            obstacle.min.y - NODE_GAP - rect.height(),
+            obstacle.max.y + NODE_GAP,
+        ]);
+    }
+    let max_sq = max_distance * max_distance;
+    xs.iter()
+        .flat_map(|&x| ys.iter().map(move |&y| egui::pos2(x, y)))
+        .filter(|pos| pos.x >= 0.0 && pos.y >= 0.0 && pos.distance_sq(rect.min) <= max_sq)
+        .filter(|pos| !blocked(egui::Rect::from_min_size(*pos, rect.size()), obstacles))
+        .min_by(|a, b| a.distance_sq(rect.min).total_cmp(&b.distance_sq(rect.min)))
+}
+
+/// Pushes every node out of the way of node `fixed`, which stays put.
+///
+/// Breadth-first from `fixed`: each node too close to an already placed one is
+/// moved out of its way by the shortest push ([`push_out`]), counts as placed and
+/// pushes the nodes it now touches in turn. Every node moves at most once, so this
+/// always ends. A pushed node can land against one placed earlier; such leftovers
+/// go to the nearest free spot ([`free_pos`]) at the end.
+fn push_apart(rects: &mut [egui::Rect], fixed: usize) {
+    let mut placed = vec![false; rects.len()];
+    placed[fixed] = true;
+    let mut queue = VecDeque::from([fixed]);
+    while let Some(pusher) = queue.pop_front() {
+        for index in 0..rects.len() {
+            if placed[index] || !too_close(rects[index], rects[pusher]) {
+                continue;
+            }
+            rects[index] = rects[index].translate(push_out(rects[index], rects[pusher]));
+            placed[index] = true;
+            queue.push_back(index);
+        }
+    }
+
+    for index in (0..rects.len()).filter(|index| *index != fixed) {
+        let others: Vec<_> = rects
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, rect)| *rect)
+            .collect();
+        let rect = rects[index];
+        if blocked(rect, &others) {
+            let pos = free_pos(rect.min, rect.size(), &others, PLACEMENT_STEP);
+            rects[index] = egui::Rect::from_min_size(pos, rect.size());
+        }
     }
 }
 
-/// Moves `rect` horizontally to `x` (its new left edge), stopping before obstacles.
-fn sweep_x(rect: egui::Rect, x: f32, obstacles: &[egui::Rect]) -> egui::Rect {
-    let mut x = x;
-    for obstacle in obstacles {
-        let zone = keep_out(*obstacle);
-        let rows_overlap = rect.min.y < zone.max.y && zone.min.y < rect.max.y;
-        if !rows_overlap {
-            continue;
-        }
-        if x > rect.min.x && zone.min.x >= rect.max.x {
-            x = x.min(obstacle.min.x - NODE_GAP - rect.width());
-        } else if x < rect.min.x && zone.max.x <= rect.min.x {
-            x = x.max(obstacle.max.x + NODE_GAP);
-        }
-    }
-    rect.translate(egui::vec2(x - rect.min.x, 0.0))
-}
-
-/// Moves `rect` vertically to `y` (its new top edge), stopping before obstacles.
-fn sweep_y(rect: egui::Rect, y: f32, obstacles: &[egui::Rect]) -> egui::Rect {
-    let mut y = y;
-    for obstacle in obstacles {
-        let zone = keep_out(*obstacle);
-        let columns_overlap = rect.min.x < zone.max.x && zone.min.x < rect.max.x;
-        if !columns_overlap {
-            continue;
-        }
-        if y > rect.min.y && zone.min.y >= rect.max.y {
-            y = y.min(obstacle.min.y - NODE_GAP - rect.height());
-        } else if y < rect.min.y && zone.max.y <= rect.min.y {
-            y = y.max(obstacle.max.y + NODE_GAP);
-        }
-    }
-    rect.translate(egui::vec2(0.0, y - rect.min.y))
+/// The shortest move (left, right, up or down) that takes `rect` out of the
+/// keep-out zone of `pusher`, leaving exactly [`NODE_GAP`] between them. Moves that
+/// would take `rect` to negative coordinates are skipped; right and down always work.
+fn push_out(rect: egui::Rect, pusher: egui::Rect) -> egui::Vec2 {
+    [
+        egui::vec2(pusher.max.x + NODE_GAP - rect.min.x, 0.0),
+        egui::vec2(pusher.min.x - NODE_GAP - rect.max.x, 0.0),
+        egui::vec2(0.0, pusher.max.y + NODE_GAP - rect.min.y),
+        egui::vec2(0.0, pusher.min.y - NODE_GAP - rect.max.y),
+    ]
+    .into_iter()
+    .filter(|push| {
+        let moved = rect.min + *push;
+        moved.x >= 0.0 && moved.y >= 0.0
+    })
+    .min_by(|a, b| a.length_sq().total_cmp(&b.length_sq()))
+    .unwrap_or_default()
 }
 
 /// The free top-left position closest to `wanted` for a node of `size`, on a
@@ -163,45 +228,127 @@ mod tests {
         egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(100.0, 50.0))
     }
 
-    #[test]
-    fn slide_stops_at_neighbor_without_tunneling() {
-        let obstacle = rect(300.0, 0.0);
-        // Jump far past the obstacle in one step: must stop in front of it.
-        let pos = slide(rect(0.0, 0.0), egui::pos2(1000.0, 0.0), &[obstacle]);
-
-        assert_eq!(pos, egui::pos2(300.0 - NODE_GAP - 100.0, 0.0));
-        assert!(!blocked(
-            egui::Rect::from_min_size(pos, rect(0.0, 0.0).size()),
-            &[obstacle]
-        ));
+    /// Asserts no two of `positions` (of [`rect`]-sized nodes) are too close or negative.
+    fn assert_apart(positions: &[egui::Pos2]) {
+        let rects: Vec<_> = positions.iter().map(|pos| rect(pos.x, pos.y)).collect();
+        for (i, a) in rects.iter().enumerate() {
+            assert!(a.min.x >= 0.0 && a.min.y >= 0.0, "{a:?} is negative");
+            for b in &rects[i + 1..] {
+                assert!(!too_close(*a, *b), "{a:?} and {b:?} are too close");
+            }
+        }
     }
 
     #[test]
-    fn slide_stops_when_a_rounding_error_too_close() {
-        let obstacle = rect(300.0, 0.0);
-        // Stopped in front of the obstacle, but a hair closer than the gap.
-        let current = rect(300.0 - NODE_GAP - 100.0 + 0.001, 0.0);
+    fn settle_keeps_a_free_drop() {
+        let rects = [rect(0.0, 0.0), rect(500.0, 0.0)];
 
-        let pos = slide(current, egui::pos2(1000.0, 0.0), &[obstacle]);
-
-        assert!(pos.x < obstacle.min.x, "tunneled through to {pos:?}");
+        assert_eq!(settle(&rects, 1), [rects[0].min, rects[1].min]);
     }
 
     #[test]
-    fn slide_moves_freely_along_a_blocked_axis() {
-        let obstacle = rect(150.0, 0.0);
-        let pos = slide(rect(0.0, 0.0), egui::pos2(200.0, 200.0), &[obstacle]);
+    fn settle_nudges_a_node_that_barely_overlaps() {
+        // Dropped 5 units into the neighbor's gap on the right.
+        let rects = [rect(0.0, 0.0), rect(105.0, 0.0)];
 
-        // Can't go through on the first row, but ends up below it at the target.
-        assert_eq!(pos, egui::pos2(200.0, 200.0));
+        let positions = settle(&rects, 1);
+
+        // Only the dropped node moves, just enough to keep the gap.
+        assert_eq!(
+            positions,
+            [egui::pos2(0.0, 0.0), egui::pos2(100.0 + NODE_GAP, 0.0)]
+        );
     }
 
     #[test]
-    fn slide_lets_an_overlapping_node_escape() {
-        let obstacle = rect(20.0, 20.0);
-        let pos = slide(rect(0.0, 0.0), egui::pos2(0.0, 300.0), &[obstacle]);
+    fn settle_moves_the_dropped_node_up_to_the_snap_distance() {
+        // Dropped half onto a lone neighbor: the closest free spot (60 up) is within
+        // `DROP_SNAP_DISTANCE`, so only the dropped node moves.
+        let rects = [rect(200.0, 100.0), rect(150.0, 100.0)];
 
-        assert_eq!(pos, egui::pos2(0.0, 300.0));
+        let positions = settle(&rects, 1);
+
+        assert_eq!(
+            positions,
+            [egui::pos2(200.0, 100.0), egui::pos2(150.0, 40.0)]
+        );
+    }
+
+    /// A column of `count` nodes at `x = 200`, from `y = 100` down, the gap apart.
+    fn column(count: usize) -> Vec<egui::Rect> {
+        (0..count)
+            .map(|i| rect(200.0, 100.0 + i as f32 * (50.0 + NODE_GAP)))
+            .collect()
+    }
+
+    #[test]
+    fn settle_pushes_neighbors_away_from_a_deep_drop() {
+        // Dropped right onto the middle of a column: every free spot is more than
+        // `DROP_SNAP_DISTANCE` away, so the dropped node stays and the one under it
+        // makes room (downwards, the shortest push), pushing the next one too.
+        let mut rects = column(3);
+        rects.push(rects[1]);
+
+        let positions = settle(&rects, 3);
+
+        assert_eq!(positions[3], rects[1].min, "the dropped node moved");
+        assert_eq!(positions[0], rects[0].min, "the node above moved");
+        assert_eq!(positions[1], rects[2].min);
+        assert_eq!(
+            positions[2],
+            rects[2].min + egui::vec2(0.0, 50.0 + NODE_GAP)
+        );
+        assert_apart(&positions);
+    }
+
+    #[test]
+    fn settle_pushes_in_a_chain() {
+        // Dropped onto the second node of a column of five: the rest of the column
+        // moves down one step each.
+        let mut rects = column(5);
+        rects.push(rects[1]);
+
+        let positions = settle(&rects, 5);
+
+        let step = egui::vec2(0.0, 50.0 + NODE_GAP);
+        assert_eq!(positions[5], rects[1].min);
+        assert_eq!(positions[0], rects[0].min);
+        for i in 1..5 {
+            assert_eq!(positions[i], rects[i].min + step, "node {i}");
+        }
+        assert_apart(&positions);
+    }
+
+    #[test]
+    fn settle_never_pushes_into_negative_coordinates() {
+        // Dropped into the canvas corner onto a node, with nodes to its right and
+        // below: no free spot within reach, and pushing left or up is impossible.
+        let rects = [
+            rect(0.0, 0.0),
+            rect(0.0, 50.0 + NODE_GAP),
+            rect(100.0 + NODE_GAP, 0.0),
+            rect(0.0, 0.0),
+        ];
+
+        let positions = settle(&rects, 3);
+
+        assert_eq!(positions[3], egui::pos2(0.0, 0.0));
+        assert_apart(&positions);
+    }
+
+    #[test]
+    fn settle_resolves_a_crowded_drop() {
+        // Dropped in the middle of a tight cluster.
+        let mut rects: Vec<_> = (0..3)
+            .flat_map(|x| (0..3).map(move |y| (x, y)))
+            .map(|(x, y)| rect(x as f32 * (100.0 + NODE_GAP), y as f32 * (50.0 + NODE_GAP)))
+            .collect();
+        rects.push(rect(100.0, 50.0));
+
+        let positions = settle(&rects, rects.len() - 1);
+
+        assert_eq!(positions.last(), Some(&egui::pos2(100.0, 50.0)));
+        assert_apart(&positions);
     }
 
     #[test]

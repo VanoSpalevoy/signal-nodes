@@ -1,6 +1,9 @@
 [package]
-name = "signal-nodes-core"
-version = "0.1.0"
-edition = "2024"
+name = "v-signal-nodes-core"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
+
+[lints]
+workspace = true

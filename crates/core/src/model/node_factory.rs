@@ -8,13 +8,13 @@
 use std::collections::BTreeMap;
 
 use crate::AppError;
-use crate::model::{Node, NodeKind, NodeSocket, ParamSpec, SocketDirection};
+use crate::model::{Node, NodeKind, NodeSocket, ParamKind, ParamSpec, SocketDirection};
 
 /// The description of one node type, as provided by a plugin.
 ///
 /// All labels (`name`, socket names, parameter names and choice options) are the
 /// English defaults; [`translations`](Self::translations) can provide them in
-/// other languages.
+/// other languages, addressed by [`TextKey`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeSpec {
     /// Globally unique type id, namespaced by the plugin, e.g. `"std.gain"`.
@@ -32,13 +32,46 @@ pub struct NodeSpec {
     pub translations: Vec<Translation>,
 }
 
+/// Which label of a [`NodeSpec`] a [`Translation`] is for.
+///
+/// Labels are addressed by their role and position or id, not by their English
+/// text, so editing the English label keeps its translations, and the same English
+/// word in two roles (a node and a parameter named "Gain") can be translated
+/// differently. Sockets and choice options are addressed by index, which is
+/// already their identity: connections and parameter values refer to them that way.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TextKey {
+    /// The node type's [`name`](NodeSpec::name).
+    Name,
+    /// Name of input socket `index`.
+    Input(usize),
+    /// Name of output socket `index`.
+    Output(usize),
+    /// Name of the parameter with this [`id`](ParamSpec::id).
+    Param(String),
+    /// Option `index` of the choice parameter with this id.
+    Option(String, usize),
+}
+
+impl TextKey {
+    /// [`Param`](Self::Param) `id`.
+    pub fn param(id: impl Into<String>) -> Self {
+        Self::Param(id.into())
+    }
+
+    /// [`Option`](Self::Option) `index` of parameter `id`.
+    pub fn option(id: impl Into<String>, index: usize) -> Self {
+        Self::Option(id.into(), index)
+    }
+}
+
 /// A label of a [`NodeSpec`] in another language.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Translation {
     /// Language code, e.g. `"ru"`.
     pub language: String,
-    /// The English label as written in the spec.
-    pub source: String,
+    /// The label being translated.
+    pub key: TextKey,
     /// The label in `language`.
     pub text: String,
 }
@@ -64,27 +97,45 @@ impl NodeSpec {
         self
     }
 
-    /// Adds translations of labels into `language`, as `(source, text)` pairs.
+    /// Adds translations of labels into `language`, as `(key, text)` pairs.
     pub fn translate<'a>(
         mut self,
         language: &str,
-        pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
+        pairs: impl IntoIterator<Item = (TextKey, &'a str)>,
     ) -> Self {
         self.translations
-            .extend(pairs.into_iter().map(|(source, text)| Translation {
+            .extend(pairs.into_iter().map(|(key, text)| Translation {
                 language: language.to_owned(),
-                source: source.to_owned(),
+                key,
                 text: text.to_owned(),
             }));
         self
     }
 
-    /// `label` in `language`, or `label` itself when there's no translation.
-    pub fn label<'a>(&'a self, language: &str, label: &'a str) -> &'a str {
+    /// The English label `key` refers to, or `None` if there's no such label.
+    pub fn english(&self, key: &TextKey) -> Option<&str> {
+        let param = |id: &str| self.params.iter().find(|param| param.id == id);
+        match key {
+            TextKey::Name => Some(&self.name),
+            TextKey::Input(index) => self.inputs.get(*index).map(|socket| socket.name.as_str()),
+            TextKey::Output(index) => self.outputs.get(*index).map(|socket| socket.name.as_str()),
+            TextKey::Param(id) => param(id).map(|param| param.name.as_str()),
+            TextKey::Option(id, index) => match &param(id)?.kind {
+                ParamKind::Choice { options, .. } => options.get(*index).map(String::as_str),
+                _ => None,
+            },
+        }
+    }
+
+    /// Label `key` in `language`, or in English when there's no translation; empty
+    /// if the spec has no such label.
+    pub fn label(&self, language: &str, key: &TextKey) -> &str {
         self.translations
             .iter()
-            .find(|translation| translation.language == language && translation.source == label)
-            .map_or(label, |translation| &translation.text)
+            .find(|translation| translation.language == language && translation.key == *key)
+            .map(|translation| translation.text.as_str())
+            .or_else(|| self.english(key))
+            .unwrap_or_default()
     }
 
     /// Adds an input socket.
@@ -102,7 +153,8 @@ impl NodeSpec {
     /// Checks the spec is usable: non-empty type id and name, sockets in the right
     /// list, socket names unique per direction, sockets that fit the kind
     /// (generators have no inputs, outputs have no outputs, processors need both),
-    /// and valid parameters with unique ids.
+    /// valid parameters with unique ids, and translations of existing labels, at
+    /// most one per language and label.
     pub fn validate(&self) -> Result<(), AppError> {
         let invalid = |message: String| {
             Err(AppError::InvalidInput(format!(
@@ -162,6 +214,24 @@ impl NodeSpec {
                 .any(|other| other.id == param.id)
             {
                 return invalid(format!("duplicate parameter '{}'", param.id));
+            }
+        }
+
+        for (index, translation) in self.translations.iter().enumerate() {
+            if self.english(&translation.key).is_none() {
+                return invalid(format!(
+                    "translation of a missing label {:?}",
+                    translation.key
+                ));
+            }
+            if self.translations[..index]
+                .iter()
+                .any(|other| other.language == translation.language && other.key == translation.key)
+            {
+                return invalid(format!(
+                    "duplicate '{}' translation of {:?}",
+                    translation.language, translation.key
+                ));
             }
         }
 
@@ -237,7 +307,15 @@ mod tests {
             .input(NodeSocket::audio_in("in"))
             .output(NodeSocket::audio_out("out"))
             .param(ParamSpec::number("gain", "Gain", 0.0, 2.0, 1.0))
-            .translate("ru", [("Gain", "Усиление")])
+            .param(ParamSpec::choice("mode", "Mode", ["soft", "hard"], 0))
+            .translate(
+                "ru",
+                [
+                    (TextKey::Name, "Усилитель"),
+                    (TextKey::param("gain"), "Усиление"),
+                    (TextKey::option("mode", 1), "жёсткий"),
+                ],
+            )
     }
 
     #[test]
@@ -253,16 +331,31 @@ mod tests {
         assert_eq!(node.kind, NodeKind::Processor);
         assert_eq!(node.inputs, gain().inputs);
         assert_eq!(node.outputs, gain().outputs);
-        assert_eq!(node.params, [ParamValue::Number(1.0)]);
+        assert_eq!(
+            node.params,
+            [ParamValue::Number(1.0), ParamValue::Choice(0)]
+        );
     }
 
     #[test]
-    fn labels_fall_back_to_english() {
+    fn labels_are_keyed_by_role_and_fall_back_to_english() {
         let spec = gain();
 
-        assert_eq!(spec.label("ru", "Gain"), "Усиление");
-        assert_eq!(spec.label("ru", "in"), "in");
-        assert_eq!(spec.label("en", "Gain"), "Gain");
+        // Same English text, different roles, different translations.
+        assert_eq!(spec.label("ru", &TextKey::Name), "Усилитель");
+        assert_eq!(spec.label("ru", &TextKey::param("gain")), "Усиление");
+        assert_eq!(spec.label("ru", &TextKey::option("mode", 1)), "жёсткий");
+        assert_eq!(spec.label("ru", &TextKey::option("mode", 0)), "soft");
+        assert_eq!(spec.label("ru", &TextKey::Input(0)), "in");
+        assert_eq!(spec.label("en", &TextKey::Name), "Gain");
+        assert_eq!(spec.label("ru", &TextKey::Output(5)), "");
+
+        // Renaming the English label keeps the translation.
+        let renamed = NodeSpec {
+            name: "Amplifier".into(),
+            ..gain()
+        };
+        assert_eq!(renamed.label("ru", &TextKey::Name), "Усилитель");
     }
 
     #[test]
@@ -287,7 +380,9 @@ mod tests {
             ..gain()
         };
         let duplicate_param = gain().param(ParamSpec::toggle("gain", "On", true));
-        let invalid_param = gain().param(ParamSpec::choice("mode", "Mode", ["a"], 3));
+        let invalid_param = gain().param(ParamSpec::choice("pan", "Pan", ["a"], 3));
+        let missing_label = gain().translate("ru", [(TextKey::option("gain", 0), "x")]);
+        let duplicate_translation = gain().translate("ru", [(TextKey::Name, "Другое")]);
 
         for spec in [
             wrong_direction,
@@ -296,6 +391,8 @@ mod tests {
             empty_id,
             duplicate_param,
             invalid_param,
+            missing_label,
+            duplicate_translation,
         ] {
             assert!(spec.validate().is_err(), "{spec:?}");
         }

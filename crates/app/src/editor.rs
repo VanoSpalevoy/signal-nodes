@@ -1,14 +1,14 @@
 //! Editor state and the `eframe` application entry.
 //!
-//! [`SignalNodesApp`] owns the whole graph being edited (nodes and connections) and
+//! [`VSignalNodesApp`] owns the whole graph being edited (nodes and connections) and
 //! the transient UI state (socket selection, language, zoom). Rendering and input
 //! handling live in the [`ui`] module, which mutates this state directly. Graph
 //! edits that have rules (adding, removing, connecting) are methods here, so they
 //! can be unit-tested without egui.
 
 use eframe::egui;
-use signal_nodes_plugin_host::PluginHost;
 use std::collections::{HashMap, HashSet};
+use v_signal_nodes_plugin_host::PluginHost;
 
 mod localization;
 mod ui;
@@ -28,13 +28,15 @@ const MAX_NODE_COUNT: usize = 256;
 /// - `node_limit_reached` is set only by a failed [`add_node_at`](Self::add_node_at)
 ///   and cleared by the next successful add or any deletion;
 /// - `connections` never contains a cycle (enforced by [`connect`](Self::connect));
-/// - nodes never overlap: adds go through [`add_node_at`](Self::add_node_at), drags
-///   through [`drag_to`](Self::drag_to) and snapping through
+/// - nodes never overlap, except the dragged node while the drag lasts: adds go
+///   through [`add_node_at`](Self::add_node_at), drops through
+///   [`end_drag`](Self::end_drag) and snapping through
 ///   [`snap_to_grid`](Self::snap_to_grid), all using `ui::placement`;
 /// - node positions change only through those methods (and
-///   [`cancel_drag`](Self::cancel_drag)), never by the UI writing `pos` itself;
+///   [`drag_to`](Self::drag_to), [`cancel_drag`](Self::cancel_drag)), never by the
+///   UI writing `pos` itself;
 /// - `drag` only refers to a node that exists.
-pub struct SignalNodesApp {
+pub struct VSignalNodesApp {
     /// Nodes in paint order: later nodes are drawn on top and win overlapping clicks.
     nodes: Vec<NodeWidget>,
     /// Graph edges, keyed by the **input** socket with the output socket as value,
@@ -71,8 +73,8 @@ pub struct SignalNodesApp {
     palette: Vec<NodeKind>,
 }
 
-/// A node drag in progress, from [`begin_drag`](SignalNodesApp::begin_drag) to
-/// [`end_drag`](SignalNodesApp::end_drag): the whole gesture is one move from
+/// A node drag in progress, from [`begin_drag`](VSignalNodesApp::begin_drag) to
+/// [`end_drag`](VSignalNodesApp::end_drag): the whole gesture is one move from
 /// `from` to wherever the node ends up.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct NodeDrag {
@@ -81,7 +83,7 @@ struct NodeDrag {
     from: egui::Pos2,
 }
 
-impl Default for SignalNodesApp {
+impl Default for VSignalNodesApp {
     fn default() -> Self {
         let plugins = builtin_plugins();
         let palette = palette(&plugins);
@@ -107,9 +109,9 @@ impl Default for SignalNodesApp {
 /// placeholder. They are part of the build, so failing to load one is a bug.
 fn builtin_plugins() -> PluginHost {
     let mut host = PluginHost::new();
-    host.load(&signal_nodes_plugin_std::StdPlugin)
+    host.load(&v_signal_nodes_plugin_std::StdPlugin)
         .expect("the std plugin loads");
-    host.load(&signal_nodes_plugin_stub::StubPlugin)
+    host.load(&v_signal_nodes_plugin_stub::StubPlugin)
         .expect("the stub plugin loads");
     host
 }
@@ -117,7 +119,7 @@ fn builtin_plugins() -> PluginHost {
 /// Every node type of `plugins`, in palette order: generators, then processors,
 /// then outputs (the order a signal flows), by type id within each group.
 fn palette(plugins: &PluginHost) -> Vec<NodeKind> {
-    use signal_nodes_core::NodeKind as Role;
+    use v_signal_nodes_core::NodeKind as Role;
     let mut kinds: Vec<_> = plugins.specs().cloned().map(NodeKind::new).collect();
     // `specs` is already sorted by type id and the sort is stable.
     kinds.sort_by_key(|kind| match kind.spec().kind {
@@ -128,7 +130,7 @@ fn palette(plugins: &PluginHost) -> Vec<NodeKind> {
     kinds
 }
 
-impl SignalNodesApp {
+impl VSignalNodesApp {
     /// Creates the editor and installs its theme once for the app's lifetime.
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
         ui::install_theme(&creation_context.egui_ctx);
@@ -211,9 +213,9 @@ impl SignalNodesApp {
         self.drag.map(|drag| drag.node_id)
     }
 
-    /// Moves the dragged node `node_id` towards `target` (its new top-left corner,
-    /// canvas coordinates). It slides and stops at the first node in the way
-    /// instead of overlapping it (`placement::slide`), and never goes negative.
+    /// Moves the dragged node `node_id` to `target` (its new top-left corner,
+    /// canvas coordinates), kept off negative coordinates. It may pass over other
+    /// nodes: overlaps are only resolved when the drag ends.
     ///
     /// Does nothing unless `node_id` is the node being dragged, so the rest of a
     /// cancelled drag gesture is ignored.
@@ -221,26 +223,46 @@ impl SignalNodesApp {
         if self.dragged_node() != Some(node_id) {
             return;
         }
-        let obstacles: Vec<_> = self
-            .nodes
-            .iter()
-            .filter(|node| node.id != node_id)
-            .map(NodeWidget::rect)
-            .collect();
         if let Some(node) = self.nodes.iter_mut().find(|node| node.id == node_id) {
-            node.pos = ui::slide(node.rect(), target, &obstacles);
+            node.pos = target.max(egui::Pos2::ZERO);
         }
     }
 
-    /// Finishes the drag in progress: the node stays where it is. This is where
-    /// the whole drag is known as one move (`from` → current position), e.g. for
+    /// Where nodes would go if the drag in progress ended now (`placement::settle`):
+    /// `(node id, new position)` for every node that moves, the dragged one
+    /// included. Empty when there is no drag or nothing would move. The canvas
+    /// paints this as the drop preview.
+    fn drop_moves(&self) -> Vec<(usize, egui::Pos2)> {
+        let Some(dragged) = self
+            .dragged_node()
+            .and_then(|id| self.nodes.iter().position(|node| node.id == id))
+        else {
+            return Vec::new();
+        };
+        let rects: Vec<_> = self.nodes.iter().map(NodeWidget::rect).collect();
+        ui::settle(&rects, dragged)
+            .into_iter()
+            .zip(&self.nodes)
+            .filter(|(pos, node)| *pos != node.pos)
+            .map(|(pos, node)| (node.id, pos))
+            .collect()
+    }
+
+    /// Finishes the drag in progress: the node lands in a free spot nearby or
+    /// pushes its neighbors aside ([`drop_moves`](Self::drop_moves)). This is where
+    /// the whole drag is known as one move (`from` → final positions), e.g. for
     /// an undo step.
     fn end_drag(&mut self) {
+        for (node_id, pos) in self.drop_moves() {
+            if let Some(node) = self.nodes.iter_mut().find(|node| node.id == node_id) {
+                node.pos = pos;
+            }
+        }
         self.drag = None;
     }
 
     /// Cancels the drag in progress and puts the node back where the drag began.
-    /// (That spot is still free: only the dragged node moved since.)
+    /// (That spot is still free: no other node moves before the drag ends.)
     fn cancel_drag(&mut self) {
         let Some(drag) = self.drag.take() else {
             return;
@@ -321,7 +343,7 @@ impl SignalNodesApp {
     }
 }
 
-impl eframe::App for SignalNodesApp {
+impl eframe::App for VSignalNodesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui::render(self, ui);
     }
@@ -330,11 +352,11 @@ impl eframe::App for SignalNodesApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_nodes_plugin_std::{GAIN, MIXER, SINK, SOURCE};
-    use signal_nodes_plugin_stub::STUB_NODE;
+    use v_signal_nodes_plugin_std::{GAIN, MIXER, SINK, SOURCE};
+    use v_signal_nodes_plugin_stub::STUB_NODE;
 
     /// The palette entry for node type `type_id`.
-    fn kind(app: &SignalNodesApp, type_id: &str) -> NodeKind {
+    fn kind(app: &VSignalNodesApp, type_id: &str) -> NodeKind {
         app.palette
             .iter()
             .find(|kind| kind.spec().type_id == type_id)
@@ -360,7 +382,7 @@ mod tests {
 
     #[test]
     fn connect_replaces_existing_source() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
 
         assert!(app.connect(output(0), input(2, 0)));
         assert!(app.connect(output(1), input(2, 0)));
@@ -371,7 +393,7 @@ mod tests {
 
     #[test]
     fn connect_refuses_cycles() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
 
         assert!(!app.connect(output(0), input(0, 0)));
         assert!(app.connection_refused);
@@ -389,7 +411,7 @@ mod tests {
 
     #[test]
     fn disconnect_input_removes_only_that_input() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         app.connect(output(0), input(2, 0));
         app.connect(output(1), input(2, 1));
         app.connection_refused = true;
@@ -403,7 +425,7 @@ mod tests {
 
     #[test]
     fn disconnect_output_removes_every_connection_from_it() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         app.connect(output(0), input(1, 0));
         app.connect(output(0), input(2, 0));
         app.connect(output(1), input(2, 1));
@@ -418,7 +440,7 @@ mod tests {
 
     #[test]
     fn remove_node_cleans_up_and_frees_id() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..3 {
             app.add_node_at(kind(&app, GAIN), egui::Pos2::ZERO);
         }
@@ -439,7 +461,7 @@ mod tests {
 
     #[test]
     fn nodes_added_at_the_same_spot_do_not_overlap() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..5 {
             app.add_node_at(kind(&app, MIXER), egui::pos2(100.0, 100.0));
         }
@@ -457,14 +479,14 @@ mod tests {
     }
 
     /// Two gain nodes side by side, `NODE_GAP`-ish apart: ids 0 (left) and 1.
-    fn two_nodes() -> SignalNodesApp {
-        let mut app = SignalNodesApp::default();
+    fn two_nodes() -> VSignalNodesApp {
+        let mut app = VSignalNodesApp::default();
         app.add_node_at(kind(&app, GAIN), egui::pos2(0.0, 0.0));
         app.add_node_at(kind(&app, GAIN), egui::pos2(300.0, 0.0));
         app
     }
 
-    fn pos(app: &SignalNodesApp, node_id: usize) -> egui::Pos2 {
+    fn pos(app: &VSignalNodesApp, node_id: usize) -> egui::Pos2 {
         app.nodes
             .iter()
             .find(|node| node.id == node_id)
@@ -473,23 +495,93 @@ mod tests {
     }
 
     #[test]
-    fn dragging_moves_the_node_but_not_into_another() {
+    fn dragging_passes_over_nodes_and_the_drop_lands_next_to_them() {
         let mut app = two_nodes();
         app.begin_drag(0);
 
         app.drag_to(0, egui::pos2(50.0, 20.0));
         assert_eq!(pos(&app, 0), egui::pos2(50.0, 20.0));
 
-        // Pushed onto node 1: stops in front of it.
-        app.drag_to(0, egui::pos2(300.0, 20.0));
-        assert!(!app.nodes[0].rect().intersects(app.nodes[1].rect()));
-        assert!(pos(&app, 0).x < 300.0);
+        // Right on top of node 1 while dragging: nothing stops it.
+        app.drag_to(0, egui::pos2(310.0, 20.0));
+        assert_eq!(pos(&app, 0), egui::pos2(310.0, 20.0));
+        assert_eq!(pos(&app, 1), egui::pos2(300.0, 0.0));
+        // The preview names what the drop will move: a free spot is close to a lone
+        // neighbor, so only the dragged node.
+        let moves = app.drop_moves();
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].0, 0);
 
         app.end_drag();
         assert_eq!(app.dragged_node(), None);
-        // Outside a drag, moves are ignored.
+        assert_eq!(pos(&app, 0), moves[0].1);
+        assert_eq!(pos(&app, 1), egui::pos2(300.0, 0.0));
+        assert!(!app.nodes[0].rect().intersects(app.nodes[1].rect()));
+        // Outside a drag, moves are ignored and nothing would move.
+        let dropped = pos(&app, 0);
         app.drag_to(0, egui::pos2(0.0, 0.0));
-        assert!(pos(&app, 0).x > 50.0);
+        assert_eq!(pos(&app, 0), dropped);
+        assert!(app.drop_moves().is_empty());
+    }
+
+    #[test]
+    fn a_drop_into_a_crowd_stays_and_pushes_the_others_aside() {
+        // A column of three gain nodes, a little more than the gap apart, and a
+        // fourth node dragged right onto the middle one: no free spot nearby.
+        let mut app = VSignalNodesApp::default();
+        for _ in 0..4 {
+            app.add_node_at(kind(&app, GAIN), egui::pos2(1000.0, 1000.0));
+        }
+        let step = app.nodes[0].rect().height() + 12.0;
+        for (i, node) in app.nodes[..3].iter_mut().enumerate() {
+            node.pos = egui::pos2(100.0, 100.0 + i as f32 * step);
+        }
+        let middle = pos(&app, 1);
+        app.begin_drag(3);
+        app.drag_to(3, middle);
+
+        app.end_drag();
+
+        assert_eq!(pos(&app, 3), middle, "the dropped node moved");
+        assert_ne!(pos(&app, 1), middle, "the node under it didn't make room");
+        for (i, a) in app.nodes.iter().enumerate() {
+            for b in &app.nodes[i + 1..] {
+                assert!(
+                    !a.rect().intersects(b.rect()),
+                    "{} and {} overlap",
+                    a.id,
+                    b.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_drop_that_barely_overlaps_moves_only_the_dropped_node() {
+        let mut app = two_nodes();
+        let right_edge = app.nodes[0].rect().right();
+        app.begin_drag(1);
+
+        // Just inside the gap next to node 0.
+        app.drag_to(1, egui::pos2(right_edge + 2.0, 0.0));
+        app.end_drag();
+
+        assert_eq!(pos(&app, 0), egui::pos2(0.0, 0.0));
+        // Nudged right just enough to keep the gap, on the same row.
+        let gap = pos(&app, 1).x - right_edge;
+        assert!(gap > 2.0 && gap < 30.0, "gap {gap}");
+        assert_eq!(pos(&app, 1).y, 0.0);
+        assert!(!app.nodes[0].rect().intersects(app.nodes[1].rect()));
+    }
+
+    #[test]
+    fn dragging_never_goes_negative() {
+        let mut app = two_nodes();
+        app.begin_drag(1);
+
+        app.drag_to(1, egui::pos2(-50.0, -50.0));
+
+        assert!(pos(&app, 1).x >= 0.0 && pos(&app, 1).y >= 0.0);
     }
 
     #[test]
@@ -535,7 +627,7 @@ mod tests {
 
     #[test]
     fn palette_lists_every_plugin_node_in_signal_order() {
-        let app = SignalNodesApp::default();
+        let app = VSignalNodesApp::default();
         let type_ids: Vec<_> = app
             .palette
             .iter()
@@ -547,7 +639,7 @@ mod tests {
 
     #[test]
     fn nodes_are_built_by_core_and_placed() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         let stub = kind(&app, STUB_NODE);
 
         app.add_node_at(stub.clone(), egui::Pos2::ZERO);
@@ -561,11 +653,11 @@ mod tests {
 
     #[test]
     fn unknown_plugin_types_are_not_added() {
-        let mut app = SignalNodesApp::default();
-        let unknown = signal_nodes_core::NodeSpec::new(
+        let mut app = VSignalNodesApp::default();
+        let unknown = v_signal_nodes_core::NodeSpec::new(
             "test.unknown",
             "Unknown",
-            signal_nodes_core::NodeKind::Generator,
+            v_signal_nodes_core::NodeKind::Generator,
         );
 
         app.add_node_at(NodeKind::new(unknown), egui::Pos2::ZERO);
@@ -576,7 +668,7 @@ mod tests {
 
     #[test]
     fn raise_node_moves_it_to_the_top() {
-        let mut app = SignalNodesApp::default();
+        let mut app = VSignalNodesApp::default();
         for _ in 0..3 {
             app.add_node_at(kind(&app, GAIN), egui::Pos2::ZERO);
         }
