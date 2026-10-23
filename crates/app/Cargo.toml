@@ -2,6 +2,7 @@
 name = "v-signal-nodes-app"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "v-signal-nodes"

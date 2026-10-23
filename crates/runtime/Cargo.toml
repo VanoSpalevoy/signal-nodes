@@ -2,6 +2,7 @@
 name = "v-signal-nodes-runtime"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 
