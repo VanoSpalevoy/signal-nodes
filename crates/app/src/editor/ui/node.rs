@@ -5,11 +5,12 @@
 //! placed node is first built as a `core::Node` by the plugin host, then turned
 //! into a [`NodeConfig`] with [`NodeConfig::from_node`].
 //!
-//! Node text (title, socket and parameter names, choice options) is the spec's
-//! English labels, kept as is and translated by the spec itself at paint time
-//! ([`NodeKind::label`], [`NodeConfig::text`]), so any plugin can ship its own
-//! translations and existing nodes follow language changes. The editor only adds
-//! the "on"/"off" of toggles.
+//! Node text (title, socket and parameter names, choice options) isn't stored:
+//! nodes keep where it comes from (socket index, parameter id, option index), and
+//! the spec looks the label up by its [`TextKey`] at paint time
+//! ([`NodeKind::label`], [`NodeConfig::socket_label`], [`NodeConfig::param_label`]),
+//! so any plugin can ship its own translations and existing nodes follow language
+//! changes. The editor only adds the "on"/"off" of toggles.
 //!
 //! All positions here are **canvas coordinates**: `(0, 0)` is the top-left of the
 //! scrollable canvas content, independent of scrolling and window layout. The
@@ -36,7 +37,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use v_signal_nodes_core::{Node, NodeSocket, NodeSpec, ParamKind, ParamSpec};
+use v_signal_nodes_core::{Node, NodeSocket, NodeSpec, ParamKind, ParamSpec, TextKey};
 
 use super::super::localization::{Language, Text};
 
@@ -66,7 +67,7 @@ impl NodeKind {
 
     /// Display name in `language`, used for the palette button and the node title.
     pub(super) fn label(&self, language: Language) -> &str {
-        self.0.label(language.code(), &self.0.name)
+        self.0.label(language.code(), &TextKey::Name)
     }
 }
 
@@ -102,8 +103,8 @@ pub(in crate::editor) struct SocketRef {
 /// Value of a node parameter, as shown.
 #[derive(Clone, Debug)]
 pub(in crate::editor) enum ParamValue {
-    /// A choice option: an English spec label, translated by the spec.
-    Option(String),
+    /// A choice option, by index; its label comes from the spec.
+    Option(usize),
     /// A number, shown with one decimal place.
     Number(f32),
     /// A toggle, shown as "on"/"off" in the UI language.
@@ -115,9 +116,7 @@ impl ParamValue {
     fn from_core(spec: &ParamSpec, value: v_signal_nodes_core::ParamValue) -> Self {
         use v_signal_nodes_core::ParamValue as Core;
         match (&spec.kind, value) {
-            (ParamKind::Choice { options, .. }, Core::Choice(index)) => {
-                Self::Option(options.get(index).cloned().unwrap_or_default())
-            }
+            (ParamKind::Choice { .. }, Core::Choice(index)) => Self::Option(index),
             (_, Core::Choice(index)) => Self::Number(index as f32),
             (_, Core::Number(value)) => Self::Number(value),
             (_, Core::Toggle(on)) => Self::Toggle(on),
@@ -129,15 +128,14 @@ impl ParamValue {
 /// Display only for now: parameters can't be edited yet.
 #[derive(Clone, Debug)]
 pub(in crate::editor) struct NodeParam {
-    /// English name from the spec.
-    name: String,
+    /// The parameter's id in the spec; its name comes from the spec.
+    id: String,
     value: ParamValue,
 }
 
 /// What a node contains: its kind, socket labels and parameters.
 ///
-/// Holds the spec's English labels, not translated strings, so nodes follow
-/// language changes.
+/// Text is looked up in the spec when shown, so nodes follow language changes.
 #[derive(Clone, Debug)]
 pub(in crate::editor) struct NodeConfig {
     pub(super) kind: NodeKind,
@@ -180,7 +178,7 @@ impl NodeConfig {
             .iter()
             .zip(params)
             .map(|(param, &value)| NodeParam {
-                name: param.name.clone(),
+                id: param.id.clone(),
                 value: ParamValue::from_core(param, value),
             })
             .collect();
@@ -192,18 +190,30 @@ impl NodeConfig {
         }
     }
 
-    /// The spec label `label` in `language`, translated by this node's spec
-    /// (English when it has no translation).
-    pub(super) fn text<'a>(&'a self, label: &'a str, language: Language) -> &'a str {
-        self.kind.spec().label(language.code(), label)
+    /// `key` in `language`, translated by this node's spec (English when it has
+    /// no translation).
+    fn text(&self, key: &TextKey, language: Language) -> &str {
+        self.kind.spec().label(language.code(), key)
+    }
+
+    /// Name of socket `index` on `side` in `language`.
+    pub(super) fn socket_label(&self, side: SocketKind, index: usize, language: Language) -> &str {
+        let key = match side {
+            SocketKind::Input => TextKey::Input(index),
+            SocketKind::Output => TextKey::Output(index),
+        };
+        self.text(&key, language)
     }
 
     /// `Name: value` of `param` in `language`, for example "Gain: 1.0" or
     /// "Режим: стерео".
     pub(super) fn param_label(&self, param: &NodeParam, language: Language) -> String {
-        let name = self.text(&param.name, language);
+        let name = self.text(&TextKey::param(&param.id), language);
         match &param.value {
-            ParamValue::Option(option) => format!("{name}: {}", self.text(option, language)),
+            ParamValue::Option(index) => format!(
+                "{name}: {}",
+                self.text(&TextKey::option(&param.id, *index), language)
+            ),
             ParamValue::Number(value) => format!("{name}: {value:.1}"),
             ParamValue::Toggle(on) => {
                 let state = if *on { Text::On } else { Text::Off };
@@ -355,13 +365,20 @@ mod tests {
         .param(ParamSpec::toggle("on", "Enabled", true))
         .translate(
             "ru",
-            [("Gain", "Усиление"), ("Mode", "Режим"), ("hard", "жёсткий")],
+            [
+                (TextKey::Name, "Усиление"),
+                (TextKey::param("mode"), "Режим"),
+                (TextKey::option("mode", 1), "жёсткий"),
+            ],
         );
         let kind = NodeKind::new(spec);
         let config = NodeConfig::for_kind(&kind);
 
         assert_eq!(kind.label(Language::Russian), "Усиление");
-        assert_eq!(config.text(&config.inputs[0], Language::Russian), "in");
+        assert_eq!(
+            config.socket_label(SocketKind::Input, 0, Language::Russian),
+            "in"
+        );
         let labels = |language| {
             config
                 .content

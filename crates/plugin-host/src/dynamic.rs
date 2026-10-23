@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use v_signal_nodes_core::{AppError, NodeSpec};
 use v_signal_nodes_plugin_api::ffi::{
-    self, EntryFn, FfiPlugin, FfiProcessArgs, FfiProcessor, FfiSlice, VersionFn,
+    self, EntryFn, FfiParamValue, FfiPlugin, FfiProcessArgs, FfiProcessor, FfiSlice, VersionFn,
 };
 use v_signal_nodes_plugin_api::{
-    API_VERSION, NodeProcessor, NodeProvider, Plugin, ProcessIo, Registrar,
+    API_VERSION, NodeProcessor, NodeProvider, Plugin, PluginError, ProcessIo, Registrar,
 };
 
 /// A plugin loaded from a dynamic library.
@@ -146,6 +146,7 @@ impl NodeProvider for DynamicProvider {
         }
         Box::new(DynamicProcessor {
             processor,
+            params: Vec::with_capacity(self.spec.params.len()),
             _loaded: Arc::clone(&self.loaded),
         })
     }
@@ -154,6 +155,9 @@ impl NodeProvider for DynamicProvider {
 /// A processor living in a plugin library.
 struct DynamicProcessor {
     processor: FfiProcessor,
+    /// Parameter values of the current `process` call in C layout; sized for the
+    /// spec's parameters up front, so `process` doesn't allocate.
+    params: Vec<FfiParamValue>,
     /// Keeps the plugin (and its library) alive; dropped after `processor`.
     _loaded: Arc<Loaded>,
 }
@@ -162,25 +166,31 @@ struct DynamicProcessor {
 unsafe impl Send for DynamicProcessor {}
 
 impl NodeProcessor for DynamicProcessor {
-    fn process(&mut self, io: &mut ProcessIo<'_>) -> Result<(), AppError> {
-        let (sample_rate, frames, params, inputs, outputs) = io.raw_parts();
+    fn prepare(&mut self, sample_rate: f32, max_frames: usize) -> Result<(), PluginError> {
+        // SAFETY: `ctx` is live; the status message is read before the next call.
+        unsafe { (self.processor.prepare)(self.processor.ctx, sample_rate, max_frames).read() }
+    }
+
+    fn reset(&mut self) {
+        // SAFETY: `ctx` is live.
+        unsafe { (self.processor.reset)(self.processor.ctx) };
+    }
+
+    fn process(&mut self, io: &mut ProcessIo<'_>) -> Result<(), PluginError> {
+        let (frames, params, inputs, outputs) = io.raw_parts();
+        self.params.clear();
+        self.params
+            .extend(params.iter().map(|&value| FfiParamValue::from(value)));
         let args = FfiProcessArgs {
-            sample_rate,
             frames,
-            params: FfiSlice::new(params),
+            params: FfiSlice::new(&self.params),
             inputs: FfiSlice::new(inputs),
             outputs: FfiSlice::new(outputs),
         };
         // SAFETY: `ctx` is live, and the buffers come from a `ProcessIo`, which
         // already guarantees what `ProcessIo::from_raw` needs on the plugin side.
-        let status = unsafe { (self.processor.process)(self.processor.ctx, args) };
-        if status.ok {
-            Ok(())
-        } else {
-            // SAFETY: the message is valid until the next call on this processor.
-            let message = unsafe { status.message.read() }?;
-            Err(AppError::Plugin(message))
-        }
+        // The status message is read before the next call.
+        unsafe { (self.processor.process)(self.processor.ctx, args).read() }
     }
 }
 
@@ -196,7 +206,17 @@ impl Drop for DynamicProcessor {
 struct FailedProcessor;
 
 impl NodeProcessor for FailedProcessor {
-    fn process(&mut self, _io: &mut ProcessIo<'_>) -> Result<(), AppError> {
-        Err(AppError::Plugin("plugin failed to create the node".into()))
+    fn prepare(&mut self, _sample_rate: f32, _max_frames: usize) -> Result<(), PluginError> {
+        Err(Self::error())
+    }
+
+    fn process(&mut self, _io: &mut ProcessIo<'_>) -> Result<(), PluginError> {
+        Err(Self::error())
+    }
+}
+
+impl FailedProcessor {
+    fn error() -> PluginError {
+        PluginError::new("plugin failed to create the node")
     }
 }

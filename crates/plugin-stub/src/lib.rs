@@ -6,8 +6,8 @@
 //! output silent.
 
 use v_signal_nodes_plugin_api::{
-    AppError, NodeKind, NodeProcessor, NodeProvider, NodeSocket, NodeSpec, ParamSpec, Plugin,
-    ProcessIo, Registrar,
+    NodeKind, NodeProcessor, NodeProvider, NodeSocket, NodeSpec, ParamSpec, Plugin, PluginError,
+    ProcessIo, Registrar, TextKey,
 };
 
 /// Type id of the stub node.
@@ -41,14 +41,14 @@ impl NodeProvider for StubNode {
             .translate(
                 "ru",
                 [
-                    ("Stub", "Заглушка"),
-                    ("In", "Вход"),
-                    ("Out", "Выход"),
-                    ("Level", "Уровень"),
-                    ("Mode", "Режим"),
-                    ("idle", "простой"),
-                    ("busy", "занят"),
-                    ("Bypass", "Обход"),
+                    (TextKey::Name, "Заглушка"),
+                    (TextKey::Input(0), "Вход"),
+                    (TextKey::Output(0), "Выход"),
+                    (TextKey::param("level"), "Уровень"),
+                    (TextKey::param("mode"), "Режим"),
+                    (TextKey::option("mode", 0), "простой"),
+                    (TextKey::option("mode", 1), "занят"),
+                    (TextKey::param("bypass"), "Обход"),
                 ],
             )
     }
@@ -62,7 +62,7 @@ impl NodeProvider for StubNode {
 struct StubProcessor;
 
 impl NodeProcessor for StubProcessor {
-    fn process(&mut self, _io: &mut ProcessIo<'_>) -> Result<(), AppError> {
+    fn process(&mut self, _io: &mut ProcessIo<'_>) -> Result<(), PluginError> {
         Ok(())
     }
 }

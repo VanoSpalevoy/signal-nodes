@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 
 use v_signal_nodes_core::{AppError, Node, NodeFactory, NodeSpec};
-use v_signal_nodes_plugin_api::{API_VERSION, NodeProcessor, NodeProvider, Plugin, Registrar};
+use v_signal_nodes_plugin_api::{NodeProcessor, NodeProvider, Plugin, Registrar};
 
 mod dynamic;
 
@@ -51,16 +51,14 @@ impl PluginHost {
     }
 
     /// Loads `plugin` and registers all its node types. Fails without changing
-    /// anything if the API version doesn't match, the plugin is already loaded, or
-    /// any of its node specs is invalid or clashes with a registered type.
+    /// anything if the plugin is already loaded or any of its node specs is
+    /// invalid or clashes with a registered type.
+    ///
+    /// There's no API version check here: a linked plugin is compiled against
+    /// this host's `plugin-api`, and a library's version is checked when it's
+    /// opened ([`DynamicPlugin::open`]).
     pub fn load(&mut self, plugin: &dyn Plugin) -> Result<(), AppError> {
         let name = plugin.name();
-        if plugin.api_version() != API_VERSION {
-            return Err(AppError::InvalidInput(format!(
-                "plugin '{name}' targets API v{}, host is v{API_VERSION}",
-                plugin.api_version()
-            )));
-        }
         if self.plugins.iter().any(|loaded| loaded == name) {
             return Err(AppError::InvalidInput(format!(
                 "plugin '{name}' is already loaded"
@@ -129,19 +127,36 @@ impl PluginHost {
 mod tests {
     use super::*;
     use v_signal_nodes_core::{NodeKind, NodeSocket};
-    use v_signal_nodes_plugin_api::{ProcessIo, RawBuffer, ffi};
+    use v_signal_nodes_core::{ParamSpec, ParamValue};
+    use v_signal_nodes_plugin_api::{PluginError, ProcessIo, RawBuffer, ffi};
 
     struct Gain;
 
+    /// Multiplies by the `gain` parameter. Fails if not prepared, and adds an
+    /// offset that `reset` clears, so the tests see every call go through.
     struct GainProcessor {
-        factor: f32,
+        prepared: bool,
+        offset: f32,
     }
 
     impl NodeProcessor for GainProcessor {
-        fn process(&mut self, io: &mut ProcessIo<'_>) -> Result<(), AppError> {
+        fn prepare(&mut self, _sample_rate: f32, _max_frames: usize) -> Result<(), PluginError> {
+            self.prepared = true;
+            Ok(())
+        }
+
+        fn reset(&mut self) {
+            self.offset = 0.0;
+        }
+
+        fn process(&mut self, io: &mut ProcessIo<'_>) -> Result<(), PluginError> {
+            if !self.prepared {
+                return Err(PluginError::new("not prepared"));
+            }
+            let factor = io.number(0);
             let input = io.input(0);
             for (out, sample) in io.output(0).iter_mut().zip(input) {
-                *out = sample * self.factor;
+                *out = sample * factor + self.offset;
             }
             Ok(())
         }
@@ -152,10 +167,14 @@ mod tests {
             NodeSpec::new("test.gain", "Gain", NodeKind::Processor)
                 .input(NodeSocket::audio_in("in"))
                 .output(NodeSocket::audio_out("out"))
+                .param(ParamSpec::number("gain", "Gain", 0.0, 4.0, 2.0))
         }
 
         fn create_processor(&self) -> Box<dyn NodeProcessor> {
-            Box::new(GainProcessor { factor: 2.0 })
+            Box::new(GainProcessor {
+                prepared: false,
+                offset: 1.0,
+            })
         }
     }
 
@@ -172,15 +191,34 @@ mod tests {
     }
 
     /// Runs a one-input, one-output processor over `input`.
-    fn run(processor: &mut dyn NodeProcessor, input: &[f32]) -> Vec<f32> {
+    fn run(
+        processor: &mut dyn NodeProcessor,
+        params: &[ParamValue],
+        input: &[f32],
+    ) -> Result<Vec<f32>, PluginError> {
         let mut output = vec![0.0; input.len()];
         let inputs = [RawBuffer::input(input)];
         let outputs = [RawBuffer::output(&mut output)];
         // SAFETY: both buffers are `input.len()` long, live for the call and
         // don't overlap.
-        let mut io = unsafe { ProcessIo::from_raw(48_000.0, input.len(), &[], &inputs, &outputs) };
-        processor.process(&mut io).unwrap();
-        output
+        let mut io = unsafe { ProcessIo::from_raw(input.len(), params, &inputs, &outputs) };
+        processor.process(&mut io)?;
+        Ok(output)
+    }
+
+    /// Drives `processor` through its whole life cycle.
+    fn check_life_cycle(processor: &mut dyn NodeProcessor) {
+        let params = [ParamValue::Number(2.0)];
+        assert_eq!(
+            run(processor, &params, &[1.0]).unwrap_err().message(),
+            "not prepared"
+        );
+        processor.prepare(48_000.0, 64).unwrap();
+        assert_eq!(run(processor, &params, &[1.0, -0.5]).unwrap(), [3.0, 0.0]);
+        processor.reset();
+        assert_eq!(run(processor, &params, &[1.0, -0.5]).unwrap(), [2.0, -1.0]);
+        let half = [ParamValue::Number(0.5)];
+        assert_eq!(run(processor, &half, &[1.0]).unwrap(), [0.5]);
     }
 
     #[test]
@@ -192,7 +230,7 @@ mod tests {
 
         assert_eq!(built.node.id, 3);
         assert_eq!(built.node.type_id, "test.gain");
-        assert_eq!(run(built.processor.as_mut(), &[1.0, -0.5]), [2.0, -1.0]);
+        check_life_cycle(built.processor.as_mut());
         assert_eq!(host.plugins(), ["test"]);
     }
 
@@ -207,8 +245,23 @@ mod tests {
 
         let mut built = host.build_node("test.gain", 0).unwrap();
 
-        assert_eq!(run(built.processor.as_mut(), &[1.0, -0.5]), [2.0, -1.0]);
+        check_life_cycle(built.processor.as_mut());
         assert_eq!(host.plugins(), ["test"]);
+    }
+
+    #[test]
+    fn specs_survive_the_c_abi() {
+        // SAFETY: as in `builds_a_working_node_through_the_c_abi`.
+        let plugin = unsafe {
+            DynamicPlugin::from_ffi(ffi::export(|| v_signal_nodes_plugin_std::StdPlugin), None)
+        }
+        .unwrap();
+        let mut through_ffi = PluginHost::new();
+        through_ffi.load(&plugin).unwrap();
+        let mut linked = PluginHost::new();
+        linked.load(&v_signal_nodes_plugin_std::StdPlugin).unwrap();
+
+        assert!(linked.specs().eq(through_ffi.specs()));
     }
 
     #[test]

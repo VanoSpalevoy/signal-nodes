@@ -400,7 +400,7 @@ fn paint_sockets(
         (SocketKind::Input, &node.config.inputs),
         (SocketKind::Output, &node.config.outputs),
     ] {
-        for (index, label) in sockets.iter().enumerate() {
+        for index in 0..sockets.len() {
             let socket = SocketRef {
                 node_id: node.id,
                 side,
@@ -433,7 +433,7 @@ fn paint_sockets(
             painter.text(
                 pos + egui::vec2(direction * view.len(SOCKET_LABEL_GAP), 0.0),
                 align,
-                node.config.text(label, app.language),
+                node.config.socket_label(side, index, app.language),
                 egui::FontId::proportional(view.len(11.0)),
                 TEXT_DIM,
             );

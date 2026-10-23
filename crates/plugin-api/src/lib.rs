@@ -13,6 +13,19 @@
 //!   trait objects aren't ABI-stable, so everything crosses the library boundary
 //!   through the C ABI in [`ffi`], and the host wraps it back into these traits.
 //!
+//! # The contract
+//!
+//! What a plugin builds against is this crate's own items plus the spec types it
+//! re-exports from `v-signal-nodes-core`: [`NodeSpec`] and what it's made of
+//! ([`NodeKind`], [`NodeSocket`], [`SocketDirection`], [`SignalType`],
+//! [`SignalEnvironment`], [`ParamSpec`], [`ParamKind`], [`TextKey`],
+//! [`Translation`]) and [`ParamValue`]. A change to any of them is a change to
+//! the plugin API. The rest of `core` (the graph-side `Node`, `NodeFactory`,
+//! `AppError`) is the host's business and isn't exposed; plugins report errors
+//! with [`PluginError`]. Dynamic libraries don't see the Rust types at all, only
+//! their C layout in [`ffi`], so those types may change without breaking the ABI
+//! as long as [`ffi`] doesn't.
+//!
 //! ```ignore
 //! use v_signal_nodes_plugin_api::*;
 //!
@@ -31,25 +44,76 @@
 // This is the contract plugin authors build against: everything public is documented.
 #![warn(missing_docs)]
 
+use std::fmt;
 use std::marker::PhantomData;
 use std::slice;
 
 pub mod ffi;
 
 pub use v_signal_nodes_core::{
-    AppError, NodeKind, NodeSocket, NodeSpec, ParamKind, ParamSpec, ParamValue, SampleBlock,
-    SignalEnvironment, SignalType, SocketDirection, Translation,
+    NodeKind, NodeSocket, NodeSpec, ParamKind, ParamSpec, ParamValue, SignalEnvironment,
+    SignalType, SocketDirection, TextKey, Translation,
 };
 
-/// Version of this API. The host refuses plugins built against another version.
+/// Version of this API. The host refuses dynamic libraries built against another
+/// version (in-process plugins are compiled against the host's copy of this crate,
+/// so they always match).
 ///
 /// Bump it on any change to the traits or to the [`ffi`] types.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
+
+/// An error reported by a plugin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginError(String);
+
+impl PluginError {
+    /// An error with `message`.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+
+    /// What went wrong.
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for PluginError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PluginError {}
+
+impl From<PluginError> for v_signal_nodes_core::AppError {
+    fn from(err: PluginError) -> Self {
+        Self::Plugin(err.0)
+    }
+}
 
 /// Per-instance processing state of a node.
+///
+/// The host calls [`prepare`](Self::prepare) before the first
+/// [`process`](Self::process) and again whenever the sample rate or the block
+/// size changes, then `process` with at most `max_frames` frames per call, and
+/// [`reset`](Self::reset) when playback jumps (stop, seek), so stale state such
+/// as an oscillator phase or a filter tail doesn't leak into the new position.
 pub trait NodeProcessor: Send {
+    /// Gets ready to process at `sample_rate` samples per second, in blocks of at
+    /// most `max_frames`. The place to allocate buffers: `process` runs on the
+    /// audio thread and shouldn't. Does nothing by default.
+    fn prepare(&mut self, sample_rate: f32, max_frames: usize) -> Result<(), PluginError> {
+        let _ = (sample_rate, max_frames);
+        Ok(())
+    }
+
+    /// Forgets the signal history, keeping what `prepare` set up. Does nothing by
+    /// default.
+    fn reset(&mut self) {}
+
     /// Processes one block. See [`ProcessIo`] for what's available.
-    fn process(&mut self, io: &mut ProcessIo<'_>) -> Result<(), AppError>;
+    fn process(&mut self, io: &mut ProcessIo<'_>) -> Result<(), PluginError>;
 }
 
 /// One node type offered by a plugin.
@@ -72,11 +136,6 @@ pub trait Registrar {
 pub trait Plugin {
     /// Unique plugin name, e.g. `"std"`.
     fn name(&self) -> &str;
-
-    /// The [`API_VERSION`] the plugin was built against.
-    fn api_version(&self) -> u32 {
-        API_VERSION
-    }
 
     /// Registers all node types of the plugin.
     fn register(&self, registrar: &mut dyn Registrar);
@@ -115,9 +174,9 @@ impl RawBuffer {
 /// parameter values, input samples and output buffers, all `frames` long.
 ///
 /// Inputs and outputs are in socket order of the node's [`NodeSpec`]; parameters in
-/// the order of [`NodeSpec::params`]. Outputs start zeroed.
+/// the order of [`NodeSpec::params`]. Outputs start zeroed. The sample rate isn't
+/// here: it comes with [`prepare`](NodeProcessor::prepare).
 pub struct ProcessIo<'a> {
-    sample_rate: f32,
     frames: usize,
     params: &'a [ParamValue],
     inputs: &'a [RawBuffer],
@@ -132,25 +191,18 @@ impl<'a> ProcessIo<'a> {
     /// initialized samples (`len == frames`), the outputs must be writable, and no
     /// output may overlap another output or any input.
     pub unsafe fn from_raw(
-        sample_rate: f32,
         frames: usize,
         params: &'a [ParamValue],
         inputs: &'a [RawBuffer],
         outputs: &'a [RawBuffer],
     ) -> Self {
         Self {
-            sample_rate,
             frames,
             params,
             inputs,
             outputs,
             _samples: PhantomData,
         }
-    }
-
-    /// Samples per second.
-    pub fn sample_rate(&self) -> f32 {
-        self.sample_rate
     }
 
     /// Number of samples in every input and output.
@@ -222,22 +274,8 @@ impl<'a> ProcessIo<'a> {
     }
 
     /// The raw parts, for hosts that forward the call (e.g. across the C ABI).
-    pub fn raw_parts(
-        &mut self,
-    ) -> (
-        f32,
-        usize,
-        &'a [ParamValue],
-        &'a [RawBuffer],
-        &'a [RawBuffer],
-    ) {
-        (
-            self.sample_rate,
-            self.frames,
-            self.params,
-            self.inputs,
-            self.outputs,
-        )
+    pub fn raw_parts(&mut self) -> (usize, &'a [ParamValue], &'a [RawBuffer], &'a [RawBuffer]) {
+        (self.frames, self.params, self.inputs, self.outputs)
     }
 }
 
